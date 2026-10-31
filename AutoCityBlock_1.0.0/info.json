@@ -1,0 +1,65 @@
+{
+  "name": "AutoCityBlock",
+  "version": "1.0.0",
+  "title": "Auto City Block: Ultimate Helmod & Space Age Edition",
+  "author": "BlockBotDev",
+  "factorio_version": "2.0",
+  "dependencies": [
+    "base >= 2.0.0",
+    "? quality >= 2.0.0",
+    "? space-age >= 2.0.0"
+  ],
+  "description": "Генератор чертежей Сити-Блоков (96x96) в стиле Helmod с запасом +1%. Учитывает технологии мира, качество, маяки, модули, планеты Space Age (включая обогрев на Аквило), переработчики (Upcycler), жидкостные/грузовые ЖД-станции и авто-запросы в сундуках."
+}
+EOcd ~/AutoCityBlock_1.0.0 && \
+gh repo edit --description "Auto City Block Blueprint Generator (Helmod & Space Age Edition) for Factorio 2.0" --add-topic factorio,factorio-mod,space-age,city-block,lua && \
+mkdir -p .github/workflows && \
+cat << 'EOF' > .github/workflows/release.yml
+name: Build Factorio Mod ZIP
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package Factorio Mod ZIP
+        run: |
+          MOD_NAME=$(jq -r '.name' info.json)
+          MOD_VER=$(jq -r '.version' info.json)
+          FULL_NAME="${MOD_NAME}_${MOD_VER}"
+          
+          mkdir -p "/tmp/${FULL_NAME}"
+          cp -r info.json control.lua README.md "/tmp/${FULL_NAME}/"
+          for extra in data.lua locale graphics prototypes; do
+            [ -e "$extra" ] && cp -r "$extra" "/tmp/${FULL_NAME}/" || true
+          done
+          
+          cd /tmp
+          zip -r "${GITHUB_WORKSPACE}/${FULL_NAME}.zip" "${FULL_NAME}"
+          
+          echo "FULL_NAME=${FULL_NAME}" >> "$GITHUB_ENV"
+          echo "MOD_VER=${MOD_VER}" >> "$GITHUB_ENV"
+
+      - name: Upload to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${MOD_VER}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${FULL_NAME}.zip" --clobber
+          else
+            gh release create "$TAG" "${FULL_NAME}.zip" \
+              --title "${FULL_NAME}" \
+              --notes "Автосборка мода для Factorio 2.0 / Space Age. Скачайте **${FULL_NAME}.zip** и положите в папку mods."
+          fi
