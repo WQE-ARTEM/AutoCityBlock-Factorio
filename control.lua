@@ -1,5 +1,5 @@
 -- ============================================================================
--- AUTO CITY BLOCK 1.1.0: ULTIMATE MEGAPACK (Helmod, Belts, Energy, Defense, UI)
+-- AUTO CITY BLOCK 1.1.1: FIXED EDITION (Factorio 2.0/2.1)
 -- ============================================================================
 
 local PLANET_RAW = {
@@ -15,7 +15,7 @@ local PLANETS = {
     {id = "vulcanus", caption = "Вулкан (Vulcanus)"},
     {id = "fulgora", caption = "Фульгора (Fulgora)"},
     {id = "gleba", caption = "Глеба (Gleba)"},
-    {id = "aquilo", caption = "Аквило (Aquilo - Теплотрасса)"}
+    {id = "aquilo", caption = "Аквило (Aquilo)"}
 }
 
 local QUALITIES = {
@@ -51,7 +51,9 @@ local CATEGORY_MACHINE_PRIORITY = {
     ["organic"] = {"biochamber", "assembling-machine-3"}
 }
 
-script.on_init(function() storage.player_state = {} end)
+script.on_init(function()
+    storage.player_state = {}
+end)
 
 local function get_state(player_index)
     if not storage.player_state then storage.player_state = {} end
@@ -68,20 +70,25 @@ local function get_state(player_index)
 end
 
 local function create_top_button(player)
-    if not player.gui.screen.cb_top_toggle_btn then
-        player.gui.screen.add{
-            type = "button", name = "cb_top_toggle_btn",
-            caption = "⚙️ AutoCityBlock", style = "button"
-        }
+    if player and player.valid and player.gui and player.gui.screen then
+        if not player.gui.screen.cb_top_toggle_btn then
+            player.gui.screen.add{
+                type = "button", name = "cb_top_toggle_btn",
+                caption = "⚙️ AutoCityBlock", style = "button"
+            }
+        end
     end
 end
 
 script.on_event(defines.events.on_player_created, function(event)
-    create_top_button(game.get_player(event.player_index))
+    local player = game.get_player(event.player_index)
+    create_top_button(player)
 end)
 
 script.on_event(defines.events.on_configuration_changed, function()
-    for _, p in pairs(game.players) do create_top_button(p) end
+    for _, p in pairs(game.players) do
+        create_top_button(p)
+    end
 end)
 
 local function is_fluid(name)
@@ -154,7 +161,6 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
         prod_bonus = f_recipe.productivity_bonus
     end
 
-    -- Безопасное получение категории рецепта для Factorio 2.0+
     local recipe_category = proto.category or (prototypes.recipe[proto.name] and prototypes.recipe[proto.name].category) or "crafting"
     local machine_name = get_best_unlocked_machine(force, recipe_category, state.use_world_tech)
     
