@@ -1,0 +1,13 @@
+{
+  "name": "AutoCityBlock",
+  "version": "1.0.0",
+  "title": "Auto City Block: Ultimate Helmod & Space Age Edition",
+  "author": "BlockBotDev",
+  "factorio_version": "2.0",
+  "dependencies": [
+    "base >= 2.0.0",
+    "? quality >= 2.0.0",
+    "? space-age >= 2.0.0"
+  ],
+  "description": "Генератор чертежей Сити-Блоков (96x96) в стиле Helmod с запасом +1%. Учитывает технологии мира, качество, маяки, модули, планеты Space Age (включая обогрев на Аквило), переработчики (Upcycler), жидкостные/грузовые ЖД-станции и авто-запросы в сундуках."
+}
