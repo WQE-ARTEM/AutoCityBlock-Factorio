@@ -1,5 +1,5 @@
 -- ============================================================================
--- AUTO CITY BLOCK 1.1.1: FIXED EDITION (Factorio 2.0/2.1)
+-- AUTO CITY BLOCK: CONVEYOR BELT & RAILWAY MEGABASE EDITION (Factorio 2.1)
 -- ============================================================================
 
 local PLANET_RAW = {
@@ -33,11 +33,6 @@ local MODULE_MODES = {
     {id = "qual3", caption = "4x Качество 3", prod = 0.0, speed = -0.20}
 }
 
-local LOGISTIC_MODES = {
-    {id = "drones", caption = "Логистика: Дроны (Сундуки)"},
-    {id = "belts", caption = "Логистика: Конвейеры (Турбо-ленты)"}
-}
-
 local CATEGORY_MACHINE_PRIORITY = {
     ["crafting"] = {"assembling-machine-3", "assembling-machine-2"},
     ["basic-crafting"] = {"assembling-machine-3", "assembling-machine-2"},
@@ -60,10 +55,8 @@ local function get_state(player_index)
     if not storage.player_state[player_index] then
         storage.player_state[player_index] = {
             item = "artillery-shell", rate = 100, quality_index = 1,
-            planet_index = 1, module_index = 2, logistic_index = 1,
-            use_beacons = true, use_defense = true, use_world_tech = true,
-            add_stations = true, is_space_platform = false, is_energy_block = false,
-            last_calc = nil
+            planet_index = 1, module_index = 2, use_beacons = true,
+            use_world_tech = true, add_stations = true, last_calc = nil
         }
     end
     return storage.player_state[player_index]
@@ -81,14 +74,11 @@ local function create_top_button(player)
 end
 
 script.on_event(defines.events.on_player_created, function(event)
-    local player = game.get_player(event.player_index)
-    create_top_button(player)
+    create_top_button(game.get_player(event.player_index))
 end)
 
 script.on_event(defines.events.on_configuration_changed, function()
-    for _, p in pairs(game.players) do
-        create_top_button(p)
-    end
+    for _, p in pairs(game.players) do create_top_button(p) end
 end)
 
 local function is_fluid(name)
@@ -148,7 +138,8 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
     end
 
     local base_output = 1
-    for _, p in pairs(proto.products) do
+    local p_list = proto.products or {}
+    for _, p in pairs(p_list) do
         if p.name == item_name then
             local amt = p.amount or ((p.amount_min + p.amount_max) / 2)
             base_output = amt * (p.probability or 1)
@@ -199,7 +190,8 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
     step.output_per_sec = step.output_per_sec + rate_per_sec
     step.crafts_per_sec = step.crafts_per_sec + crafts_per_sec
 
-    for _, ing in pairs(proto.ingredients) do
+    local ing_list = proto.ingredients or {}
+    for _, ing in pairs(ing_list) do
         local ing_rate = crafts_per_sec * ing.amount
         calculate_chain(force, ing.name, ing_rate, state, chain_steps, raw_totals, depth + 1)
     end
@@ -219,15 +211,7 @@ local function run_calculation(player)
     for _, step in pairs(chain_steps) do table.insert(sorted_steps, step) end
     table.sort(sorted_steps, function(a, b) return a.order < b.order end)
 
-    local total_MW = 0
-    for _, step in pairs(sorted_steps) do
-        local m_proto = prototypes.entity[step.machine_name]
-        local base_consumption_kW = 150
-        if m_proto and m_proto.energy_usage then base_consumption_kW = m_proto.energy_usage / 1000 end
-        total_MW = total_MW + (math.ceil(step.exact_machines) * base_consumption_kW * step.speed) / 1000
-    end
-
-    state.last_calc = { steps = sorted_steps, raw = raw_totals, total_MW = math.ceil(total_MW * 10) / 10 }
+    state.last_calc = { steps = sorted_steps, raw = raw_totals }
 end
 
 local function build_blueprint(player)
@@ -239,72 +223,143 @@ local function build_blueprint(player)
     local q_name = (QUALITIES[state.quality_index] or QUALITIES[1]).name
     local use_quality = prototypes.quality and prototypes.quality[q_name] ~= nil
     local planet_id = (PLANETS[state.planet_index] or PLANETS[1]).id
-    local is_aquilo = (planet_id == "aquilo")
 
     local bp_entities = {}
     local bp_tiles = {}
     local eid = 1
+    local half = 48
 
-    if state.is_energy_block then
-        table.insert(bp_entities, {entity_number = eid, name = "nuclear-reactor", position = {x = 0, y = 0}}); eid = eid + 1
-        table.insert(bp_entities, {entity_number = eid, name = "heat-exchanger", position = {x = -3, y = -3}}); eid = eid + 1
-        table.insert(bp_entities, {entity_number = eid, name = "steam-turbine", position = {x = -6, y = -6}}); eid = eid + 1
-        player.print("[AutoCityBlock] Сгенерирован чертеж Энерго-Блока!")
-    elseif state.is_space_platform then
-        table.insert(bp_entities, {entity_number = eid, name = "space-platform-hub", position = {x = 0, y = 0}}); eid = eid + 1
-        table.insert(bp_entities, {entity_number = eid, name = "asteroid-collector", position = {x = -5, y = -5}}); eid = eid + 1
-        table.insert(bp_entities, {entity_number = eid, name = "crusher", position = {x = 5, y = -5}}); eid = eid + 1
-        player.print("[AutoCityBlock] Сгенерирован чертеж Космической платформы!")
-    else
-        local half = 48
-        for x = -half, half - 1 do
-            for y = -half, half - 1 do
-                if x == -half or x == half - 1 or y == -half or y == half - 1 then
-                    table.insert(bp_tiles, {name = "refined-hazard-concrete-left", position = {x = x, y = y}})
-                elseif is_aquilo then
-                    table.insert(bp_tiles, {name = "refined-concrete", position = {x = x, y = y}})
-                end
+    for x = -half, half - 1 do
+        for y = -half, half - 1 do
+            if x == -half or x == half - 1 or y == -half or y == half - 1 then
+                table.insert(bp_tiles, {name = "refined-hazard-concrete-left", position = {x = x, y = y}})
+            else
+                table.insert(bp_tiles, {name = "refined-concrete", position = {x = x, y = y}})
             end
         end
+    end
 
-        if state.use_defense then
-            for wx = -45, 45, 2 do
-                table.insert(bp_entities, {entity_number = eid, name = "stone-wall", position = {x = wx, y = -45}}); eid = eid + 1
-                table.insert(bp_entities, {entity_number = eid, name = "stone-wall", position = {x = wx, y = 45}}); eid = eid + 1
-            end
-            table.insert(bp_entities, {entity_number = eid, name = "laser-turret", position = {x = -42, y = -43}}); eid = eid + 1
-            table.insert(bp_entities, {entity_number = eid, name = "laser-turret", position = {x = 42, y = -43}}); eid = eid + 1
+    if state.add_stations then
+        for x = -46, 46, 2 do
+            table.insert(bp_entities, {entity_number = eid, name = "straight-rail", position = {x = x, y = -46}, direction = 4}); eid = eid + 1
+            table.insert(bp_entities, {entity_number = eid, name = "straight-rail", position = {x = x, y = 46}, direction = 4}); eid = eid + 1
+        end
+        for y = -46, 46, 2 do
+            table.insert(bp_entities, {entity_number = eid, name = "straight-rail", position = {x = -46, y = y}, direction = 0}); eid = eid + 1
+            table.insert(bp_entities, {entity_number = eid, name = "straight-rail", position = {x = 46, y = y}, direction = 0}); eid = eid + 1
         end
 
-        local cur_x, cur_y = -38, -34
-        local max_y = 34
-        local row_step_x = state.use_beacons and 10 or 7
+        table.insert(bp_entities, {entity_number = eid, name = "rail-chain-signal", position = {x = -44, y = -44}, direction = 0}); eid = eid + 1
+        table.insert(bp_entities, {entity_number = eid, name = "rail-signal", position = {x = -42, y = -44}, direction = 0}); eid = eid + 1
+        table.insert(bp_entities, {entity_number = eid, name = "rail-chain-signal", position = {x = 44, y = -44}, direction = 4}); eid = eid + 1
+        table.insert(bp_entities, {entity_number = eid, name = "rail-signal", position = {x = 42, y = -44}, direction = 4}); eid = eid + 1
 
-        for _, step in ipairs(calc.steps) do
-            local count = math.ceil(step.exact_machines)
-            for i = 1, count do
-                if cur_y > max_y then cur_y = -34; cur_x = cur_x + row_step_x end
+        table.insert(bp_entities, {
+            entity_number = eid, name = "train-stop",
+            position = {x = -28, y = -44}, direction = 4,
+            station = string.format("[item=%s] Вывоз (%d/м +1%%)", state.item, state.rate),
+            trains_limit = 2
+        }); eid = eid + 1
+
+        local st_x = -38
+        for raw_name, raw_rate in pairs(calc.raw) do
+            if st_x <= 36 then
+                local fluid_flag = is_fluid(raw_name)
+                local icon_tag = fluid_flag and "fluid" or "item"
                 table.insert(bp_entities, {
-                    entity_number = eid, name = step.machine_name,
-                    position = {x = cur_x, y = cur_y}, recipe = step.recipe_name,
-                    quality = use_quality and q_name or nil
+                    entity_number = eid, name = "train-stop",
+                    position = {x = st_x, y = 44}, direction = 12,
+                    station = string.format("[%s=%s] Снабжение (%.0f/м)", icon_tag, raw_name, raw_rate * 60),
+                    trains_limit = 2
                 }); eid = eid + 1
 
-                if state.logistic_index == 2 then
-                    table.insert(bp_entities, {entity_number = eid, name = "stack-inserter", position = {x = cur_x - 2, y = cur_y - 1}, direction = 12}); eid = eid + 1
-                    table.insert(bp_entities, {entity_number = eid, name = "turbo-transport-belt", position = {x = cur_x - 3, y = cur_y - 1}, direction = 0}); eid = eid + 1
+                if fluid_flag then
+                    table.insert(bp_entities, {entity_number = eid, name = "pump", position = {x = st_x + 2, y = 44}, direction = 0}); eid = eid + 1
+                    table.insert(bp_entities, {entity_number = eid, name = "storage-tank", position = {x = st_x + 2, y = 41}}); eid = eid + 1
+                    table.insert(bp_entities, {entity_number = eid, name = "pipe-to-ground", position = {x = st_x + 2, y = 39}, direction = 0}); eid = eid + 1
                 else
-                    table.insert(bp_entities, {entity_number = eid, name = "bulk-inserter", position = {x = cur_x - 2, y = cur_y - 1}, direction = 12}); eid = eid + 1
-                    table.insert(bp_entities, {entity_number = eid, name = "requester-chest", position = {x = cur_x - 3, y = cur_y - 1}, quality = use_quality and q_name or nil}); eid = eid + 1
-                    table.insert(bp_entities, {entity_number = eid, name = "bulk-inserter", position = {x = cur_x - 2, y = cur_y + 1}, direction = 4}); eid = eid + 1
-                    table.insert(bp_entities, {entity_number = eid, name = "passive-provider-chest", position = {x = cur_x - 3, y = cur_y + 1}, quality = use_quality and q_name or nil}); eid = eid + 1
+                    for offset = 1, 4 do
+                        table.insert(bp_entities, {
+                            entity_number = eid, name = "passive-provider-chest",
+                            position = {x = st_x + offset, y = 44},
+                            quality = use_quality and q_name or nil
+                        }); eid = eid + 1
+                    end
                 end
-
-                if state.use_beacons then
-                    table.insert(bp_entities, {entity_number = eid, name = "beacon", position = {x = cur_x + 4, y = cur_y}, quality = use_quality and q_name or nil}); eid = eid + 1
-                end
-                cur_y = cur_y + 4
+                st_x = st_x + 12
             end
+        end
+    end
+
+    for x = -36, 36, 18 do
+        for y = -36, 36, 18 do
+            table.insert(bp_entities, {entity_number = eid, name = "substation", position = {x = x, y = y}, quality = use_quality and q_name or nil}); eid = eid + 1
+        end
+    end
+
+    local cur_x, cur_y = -36, -32
+    local max_y = 32
+    local row_step_x = state.use_beacons and 10 or 8
+
+    for _, step in ipairs(calc.steps) do
+        local count = math.ceil(step.exact_machines)
+        for i = 1, count do
+            if cur_y > max_y then
+                cur_y = -32
+                cur_x = cur_x + row_step_x
+            end
+
+            table.insert(bp_entities, {
+                entity_number = eid, name = step.machine_name,
+                position = {x = cur_x, y = cur_y}, recipe = step.recipe_name,
+                quality = use_quality and q_name or nil
+            }); eid = eid + 1
+
+            table.insert(bp_entities, {
+                entity_number = eid, name = "stack-inserter",
+                position = {x = cur_x - 2, y = cur_y - 1}, direction = 12,
+                quality = use_quality and q_name or nil
+            }); eid = eid + 1
+            table.insert(bp_entities, {
+                entity_number = eid, name = "turbo-transport-belt",
+                position = {x = cur_x - 3, y = cur_y - 1}, direction = 0
+            }); eid = eid + 1
+
+            table.insert(bp_entities, {
+                entity_number = eid, name = "stack-inserter",
+                position = {x = cur_x - 2, y = cur_y + 1}, direction = 4,
+                quality = use_quality and q_name or nil
+            }); eid = eid + 1
+            table.insert(bp_entities, {
+                entity_number = eid, name = "turbo-transport-belt",
+                position = {x = cur_x - 3, y = cur_y + 1}, direction = 2
+            }); eid = eid + 1
+
+            local uses_fluid = false
+            for _, ing in pairs(step.ingredients or {}) do
+                if is_fluid(ing.name) then uses_fluid = true; break end
+            end
+
+            if uses_fluid then
+                table.insert(bp_entities, {
+                    entity_number = eid, name = "pipe-to-ground",
+                    position = {x = cur_x + 2, y = cur_y - 1}, direction = 0
+                }); eid = eid + 1
+                table.insert(bp_entities, {
+                    entity_number = eid, name = "pipe",
+                    position = {x = cur_x + 1, y = cur_y}
+                }); eid = eid + 1
+            end
+
+            if state.use_beacons then
+                table.insert(bp_entities, {
+                    entity_number = eid, name = "beacon",
+                    position = {x = cur_x + 4, y = cur_y},
+                    quality = use_quality and q_name or nil
+                }); eid = eid + 1
+            end
+
+            cur_y = cur_y + 4
         end
     end
 
@@ -312,8 +367,8 @@ local function build_blueprint(player)
         player.cursor_stack.set_stack({name = "blueprint", count = 1})
         player.cursor_stack.set_blueprint_entities(bp_entities)
         player.cursor_stack.set_blueprint_tiles(bp_tiles)
-        player.cursor_stack.label = string.format("ACB [%s]: %s (%d/м)", planet_id, state.item, state.rate)
-        player.print(string.format("[AutoCityBlock 1.1] Чертёж готов! Энергия: %.1f МВт", calc.total_MW))
+        player.cursor_stack.label = string.format("ACB Belt [%s]: %s (%d/м)", planet_id, state.item, state.rate)
+        player.print("[AutoCityBlock] Чертёж конвейерного сити-блока с ЖД создан!")
     end
 end
 
@@ -324,9 +379,9 @@ local function draw_helmod_gui(player)
     run_calculation(player)
     local calc = state.last_calc
 
-    local main_frame = player.gui.screen.add{type = "frame", name = "cb_helmod_frame", direction = "vertical", caption = "AutoCityBlock 1.1 (Ultimate Edition)"}
+    local main_frame = player.gui.screen.add{type = "frame", name = "cb_helmod_frame", direction = "vertical", caption = "AutoCityBlock: Belts & Rails Megabase"}
     main_frame.auto_center = true
-    main_frame.style.min_width = 900
+    main_frame.style.min_width = 850
 
     local top_bar = main_frame.add{type = "frame", style = "subheader_frame", direction = "horizontal"}
     top_bar.add{type = "label", caption = "Предмет:", style = "caption_label"}
@@ -344,19 +399,14 @@ local function draw_helmod_gui(player)
 
     local opt_bar = main_frame.add{type = "flow", direction = "horizontal"}
     opt_bar.style.padding = 6
-    local l_items = {} for _, l in ipairs(LOGISTIC_MODES) do table.insert(l_items, l.caption) end
-    opt_bar.add{type = "drop-down", name = "cb_drop_logistic", items = l_items, selected_index = state.logistic_index}
+    opt_bar.add{type = "checkbox", name = "cb_chk_beacons", caption = "⚡ Ряды маяков", state = state.use_beacons}
     opt_bar.add{type = "empty-widget"}.style.width = 15
-    opt_bar.add{type = "checkbox", name = "cb_chk_defense", caption = "🛡️ Защитный периметр", state = state.use_defense}
-    opt_bar.add{type = "empty-widget"}.style.width = 15
-    opt_bar.add{type = "checkbox", name = "cb_chk_energy", caption = "⚡ Энергоблок", state = state.is_energy_block}
-    opt_bar.add{type = "empty-widget"}.style.width = 15
-    opt_bar.add{type = "checkbox", name = "cb_chk_platform", caption = "🛰️ Космическая платформа", state = state.is_space_platform}
+    opt_bar.add{type = "checkbox", name = "cb_chk_rail", caption = "🚂 ЖД пути, станции и светофоры", state = state.add_stations}
 
     local content_frame = main_frame.add{type = "frame", style = "inside_shallow_frame", direction = "vertical"}
     content_frame.style.padding = 8
     local scroll = content_frame.add{type = "scroll-pane", direction = "vertical"}
-    scroll.style.max_height = 340
+    scroll.style.max_height = 320
 
     local tbl = scroll.add{type = "table", column_count = 5, draw_horizontal_lines = true}
     for _, h in ipairs({"Рецепт", "Станок", "Заводов (Точно / Блок)", "Продуктивность", "Выход (/мин)"}) do
@@ -380,9 +430,8 @@ local function draw_helmod_gui(player)
     end
 
     local bot_bar = main_frame.add{type = "frame", style = "subheader_frame", direction = "horizontal"}
-    bot_bar.add{type = "label", caption = string.format("⚡ Потребление блока: %.1f МВт", calc and calc.total_MW or 0), style = "bold_label"}
     bot_bar.add{type = "empty-widget"}.style.horizontally_stretchable = true
-    bot_bar.add{type = "button", name = "cb_btn_blueprint", caption = "Создать чертеж (+1%)", style = "confirm_button"}
+    bot_bar.add{type = "button", name = "cb_btn_blueprint", caption = "Создать конвейерный чертеж Сити-Блока (+1%)", style = "confirm_button"}
     bot_bar.add{type = "button", name = "cb_btn_close", caption = "Закрыть"}
 end
 
@@ -418,8 +467,7 @@ script.on_event(defines.events.on_gui_selection_state_changed, function(event)
     local player = game.get_player(event.player_index)
     local state = get_state(player.index)
     if name == "cb_drop_quality" then state.quality_index = event.element.selected_index
-    elseif name == "cb_drop_planet" then state.planet_index = event.element.selected_index
-    elseif name == "cb_drop_logistic" then state.logistic_index = event.element.selected_index end
+    elseif name == "cb_drop_planet" then state.planet_index = event.element.selected_index end
     draw_helmod_gui(player)
 end)
 
@@ -427,8 +475,7 @@ script.on_event(defines.events.on_gui_checked_state_changed, function(event)
     local name = event.element.name
     local player = game.get_player(event.player_index)
     local state = get_state(player.index)
-    if name == "cb_chk_defense" then state.use_defense = event.element.state
-    elseif name == "cb_chk_energy" then state.is_energy_block = event.element.state
-    elseif name == "cb_chk_platform" then state.is_space_platform = event.element.state end
+    if name == "cb_chk_beacons" then state.use_beacons = event.element.state
+    elseif name == "cb_chk_rail" then state.add_stations = event.element.state end
     draw_helmod_gui(player)
 end)
