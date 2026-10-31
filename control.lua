@@ -159,7 +159,8 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
         prod_bonus = f_recipe.productivity_bonus
     end
 
-    local machine_name = get_best_unlocked_machine(force, proto.category, state.use_world_tech)
+    local recipe_category = proto.category or (prototypes.recipe[proto.name] and prototypes.recipe[proto.name].category) or "crafting"
+    local machine_name = get_best_unlocked_machine(force, recipe_category, state.use_world_tech)
     local machine_proto = prototypes.entity[machine_name]
     local base_speed = (machine_proto and machine_proto.crafting_speed) or 1.0
 
