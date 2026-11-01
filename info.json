@@ -1,13 +1,13 @@
 {
   "name": "AutoCityBlock",
-  "version": "1.1.1",
-  "title": "Auto City Block: Ultimate Helmod & Space Age Edition",
-  "author": "BlockBotDev",
+  "version": "1.2.0",
+  "title": "Auto City Block: Main Bus & Connected Pipes Edition",
+  "author": "WQE-ARTEM",
   "factorio_version": "2.1",
   "dependencies": [
-    "base >= 2.1.0",
-    "? quality >= 2.1.0",
-    "? space-age >= 2.1.0"
+    "base >= 2.0.0",
+    "? quality >= 2.0.0",
+    "? space-age >= 2.0.0"
   ],
-  "description": "Генератор чертежей Сити-Блоков (96x96) в стиле Helmod с запасом +1%. Учитывает технологии мира, качество, маяки, модули, планеты Space Age (включая обогрев на Аквило), переработчики (Upcycler), жидкостные/грузовые ЖД-станции и авто-запросы в сундуках."
+  "description": "Генератор плотных производственных комплексов с Главной Шиной (Main Bus), разделителями, подземными переходами, непрерывной разводкой труб, маяками и ЖД-контуром."
 }
