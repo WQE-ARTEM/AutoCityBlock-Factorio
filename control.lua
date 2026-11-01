@@ -1,5 +1,5 @@
 -- ============================================================================
--- AUTO CITY BLOCK 1.2.0: MAIN BUS, CONNECTED PIPES & DENSE COLUMNS EDITION
+-- AUTO CITY BLOCK 1.2.1: MAIN BUS, CONNECTED PIPES & DENSE COLUMNS EDITION
 -- ============================================================================
 
 local PLANET_RAW = {
@@ -46,7 +46,6 @@ local CATEGORY_MACHINE_PRIORITY = {
     ["organic"] = {"biochamber", "assembling-machine-3"}
 }
 
--- Габариты зданий, чтобы ставить их вплотную без наслоений
 local MACHINE_SIZE = {
     ["assembling-machine-1"] = 3,
     ["assembling-machine-2"] = 3,
@@ -61,14 +60,41 @@ local MACHINE_SIZE = {
     ["oil-refinery"] = 5
 }
 
--- Направления в Factorio 2.0 / 2.1 (16-dir enum)
 local DIR_NORTH = 0
 local DIR_EAST  = 4
 local DIR_SOUTH = 8
 local DIR_WEST  = 12
 
+local function create_top_button(player)
+    if player and player.valid and player.gui and player.gui.screen then
+        if not player.gui.screen.cb_top_toggle_btn then
+            player.gui.screen.add{
+                type = "button",
+                name = "cb_top_toggle_btn",
+                caption = "⚙️ AutoCityBlock 1.2",
+                style = "button"
+            }
+        end
+    end
+end
+
 script.on_init(function()
     storage.player_state = {}
+    for _, p in pairs(game.players) do
+        create_top_button(p)
+    end
+end)
+
+-- ПРАВИЛЬНАЯ регистрация изменения конфигурации (через script.on_configuration_changed, а не on_event!)
+script.on_configuration_changed(function()
+    if not storage.player_state then storage.player_state = {} end
+    for _, p in pairs(game.players) do
+        create_top_button(p)
+    end
+end)
+
+script.on_event(defines.events.on_player_created, function(event)
+    create_top_button(game.get_player(event.player_index))
 end)
 
 local function get_state(player_index)
@@ -89,32 +115,10 @@ local function get_state(player_index)
     return storage.player_state[player_index]
 end
 
-local function create_top_button(player)
-    if player and player.valid and player.gui and player.gui.screen then
-        if not player.gui.screen.cb_top_toggle_btn then
-            player.gui.screen.add{
-                type = "button",
-                name = "cb_top_toggle_btn",
-                caption = "⚙️ AutoCityBlock 1.2",
-                style = "button"
-            }
-        end
-    end
-end
-
-script.on_event(defines.events.on_player_created, function(event)
-    create_top_button(game.get_player(event.player_index))
-end)
-
-script.on_event(defines.events.on_configuration_changed, function()
-    for _, p in pairs(game.players) do create_top_button(p) end
-end)
-
 local function is_fluid(name)
     return prototypes.fluid and prototypes.fluid[name] ~= nil
 end
 
--- Автовыбор лучших доступных конвейеров и манипуляторов в игре
 local function get_belt_set()
     if prototypes.entity["turbo-transport-belt"] then
         return "turbo-transport-belt", "turbo-underground-belt", "turbo-splitter"
@@ -193,7 +197,10 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
         prod_bonus = f_recipe.productivity_bonus
     end
 
-    local recipe_category = proto.category or (prototypes.recipe[proto.name] and prototypes.recipe[proto.name].category) or "crafting"
+    local recipe_category = "crafting"
+    local ok_cat, cat_val = pcall(function() return proto.category end)
+    if ok_cat and cat_val then recipe_category = cat_val end
+
     local machine_name = get_best_unlocked_machine(force, recipe_category, state.use_world_tech)
     local machine_proto = prototypes.entity[machine_name]
     local base_speed = (machine_proto and machine_proto.crafting_speed) or 1.0
@@ -273,14 +280,13 @@ local function run_calculation(player)
 
     local sorted_steps = {}
     for _, step in pairs(chain_steps) do table.insert(sorted_steps, step) end
-    -- Сортируем от базовых полуфабрикатов к финальной сборке (слева направо вдоль Главной Шины)
     table.sort(sorted_steps, function(a, b) return a.order > b.order end)
 
     state.last_calc = { steps = sorted_steps, raw = raw_totals }
 end
 
 -- ============================================================================
--- ГЕНЕРАТОР ЗАВОДА: ГЛАВНАЯ ШИНА + СПЛИТТЕРЫ + ПЛОТНЫЕ КОЛОННЫ + ТРУБОПРОВОД
+-- ГЕНЕРАТОР ЗАВОДА: ГЛАВНАЯ ШИНА + ПЛОТНЫЕ КОЛОННЫ + ТРУБОПРОВОД (БЕЗ КОЛЛИЗИЙ)
 -- ============================================================================
 local function build_blueprint(player)
     local state = get_state(player.index)
@@ -293,23 +299,41 @@ local function build_blueprint(player)
     local planet_id = (PLANETS[state.planet_index] or PLANETS[1]).id
 
     local belt_name, ug_name, splitter_name = get_belt_set()
-    local fast_ins, long_ins = get_inserter_names()
+    local fast_ins = get_inserter_names()
 
-    local bp_entities = {}
+    -- Сетка клеток, исключающая наложение сплиттеров/нырков на обычные конвейеры шины
+    local occupied = {}
+    local bp_list = {}
     local bp_tiles = {}
-    local eid = 1
 
-    local function add_ent(t)
-        t.entity_number = eid
+    local function mark_area(cx, cy, w, h, idx)
+        local x1 = math.floor(cx - w / 2 + 0.01)
+        local x2 = math.floor(cx + w / 2 - 0.01)
+        local y1 = math.floor(cy - h / 2 + 0.01)
+        local y2 = math.floor(cy + h / 2 - 0.01)
+        for x = x1, x2 do
+            for y = y1, y2 do
+                local key = x .. ":" .. y
+                if occupied[key] then
+                    bp_list[occupied[key]] = nil
+                end
+                occupied[key] = idx
+            end
+        end
+    end
+
+    local function add_ent(t, w, h)
+        w = w or 1
+        h = h or 1
         if use_quality and not t.no_quality then
             t.quality = q_name
         end
         t.no_quality = nil
-        table.insert(bp_entities, t)
-        eid = eid + 1
+        local idx = #bp_list + 1
+        bp_list[idx] = t
+        mark_area(t.position.x, t.position.y, w, h, idx)
     end
 
-    -- Назначаем каждому ресурсу и полуфабрикату свою выделенную полосу на Главной Шине (Main Bus)
     local solid_lanes = {}
     local fluid_lanes = {}
     local s_idx = 1
@@ -317,15 +341,9 @@ local function build_blueprint(player)
 
     local function register_bus_item(name)
         if is_fluid(name) then
-            if not fluid_lanes[name] then
-                fluid_lanes[name] = f_idx
-                f_idx = f_idx + 1
-            end
+            if not fluid_lanes[name] then fluid_lanes[name] = f_idx; f_idx = f_idx + 1 end
         else
-            if not solid_lanes[name] then
-                solid_lanes[name] = s_idx
-                s_idx = s_idx + 1
-            end
+            if not solid_lanes[name] then solid_lanes[name] = s_idx; s_idx = s_idx + 1 end
         end
     end
 
@@ -335,21 +353,33 @@ local function build_blueprint(player)
     local total_solid_lanes = math.max(4, s_idx - 1)
     local total_fluid_lanes = math.max(2, f_idx - 1)
 
-    -- Геометрия верхней Главной Шины (Main Bus) как на Фото 2
     local bus_top_y = -32
     local fluid_bus_top_y = bus_top_y + total_solid_lanes + 2
     local col_start_y = fluid_bus_top_y + total_fluid_lanes * 2 + 4
-    local max_machines_per_side = 12 -- До 24 заводов в одной двойной колонне
+    local max_machines_per_side = 12
 
     local start_x = -40
     local cur_x = start_x
     local max_used_y = col_start_y + 36
 
-    -- 1. Строим плотные сдвоенные производственные колонны для каждого этапа
+    -- 1. Сначала прокладываем непрерывную Главную Шину (Main Bus)
+    -- (Позже сплиттеры и подземные переходы автоматически заменят нужные клетки на шине!)
+    local estimated_end_x = start_x + (#calc.steps * 22) + 30
+    for x = start_x - 4, estimated_end_x do
+        for lane = 1, total_solid_lanes do
+            local ly = bus_top_y + lane - 1
+            add_ent({name = belt_name, position = {x = x, y = ly}, direction = DIR_EAST}, 1, 1)
+        end
+        for flane = 1, total_fluid_lanes do
+            local fy = fluid_bus_top_y + (flane - 1) * 2
+            add_ent({name = "pipe", position = {x = x, y = fy}, no_quality = true}, 1, 1)
+        end
+    end
+
+    -- 2. Строим плотные сдвоенные производственные колонны и врезаем их в Главную Шину
     for _, step in ipairs(calc.steps) do
         local m_size = MACHINE_SIZE[step.machine_name] or 3
         local total_needed = math.ceil(step.exact_machines)
-        -- Если заводов очень много (например > 24), автоматически создаем несколько параллельных колонн рядом
         local sub_columns = math.ceil(total_needed / (max_machines_per_side * 2))
 
         for sc = 1, sub_columns do
@@ -360,11 +390,6 @@ local function build_blueprint(player)
             local col_width = state.use_beacons and (m_size * 2 + 17) or (m_size * 2 + 11)
             local center_x = cur_x + math.floor(col_width / 2)
 
-            -- Координаты X элементов внутри сдвоенной колонны (симметрично относительно center_x):
-            -- center_x: Центральный конвейер ВЫГРУЗКИ готового продукта (идет ВВЕРХ в Главную Шину)
-            -- left_in1_x / right_in1_x: Первая лента подачи сырья (идет ВНИЗ из Главной Шины)
-            -- left_in2_x / right_in2_x: Вторая лента подачи сырья (через длинный манипулятор)
-            -- left_pipe_x / right_pipe_x: Непрерывный трубопровод вдоль внешних сторон заводов
             local left_m_x  = center_x - 3 - math.floor(m_size / 2)
             local right_m_x = center_x + 3 + math.floor(m_size / 2)
 
@@ -387,130 +412,118 @@ local function build_blueprint(player)
             local right_beacon_x   = right_pipe_x + 2
 
             local col_bottom_y = col_start_y + pairs_count * m_size
-
             if col_bottom_y > max_used_y then max_used_y = col_bottom_y end
 
-            -- A) Подключение ВХОДНЫХ конвейеров колонны к Главной Шине через Сплиттеры и Подземные переходы
+            -- A) Врезка сплиттеров в Главную Шину и спуск сырья в колонну
             local ing1 = step.solid_ings[1] and step.solid_ings[1].name
             local ing2 = step.solid_ings[2] and step.solid_ings[2].name
 
             if ing1 and solid_lanes[ing1] then
                 local lane_y = bus_top_y + solid_lanes[ing1] - 1
-                -- Сплиттер на Главной Шине
-                add_ent{name = splitter_name, position = {x = left_belt_in1_x, y = lane_y + 0.5}, direction = DIR_EAST}
-                -- Подземный нырок от сплиттера под остальными полосами шины
-                add_ent{name = ug_name, position = {x = left_belt_in1_x, y = lane_y + 1}, direction = DIR_SOUTH, type = "input"}
-                add_ent{name = ug_name, position = {x = left_belt_in1_x, y = col_start_y - 2}, direction = DIR_SOUTH, type = "output"}
-                -- Перемычка на правую половину колонны
+                add_ent({name = splitter_name, position = {x = left_belt_in1_x, y = lane_y + 0.5}, direction = DIR_EAST}, 1, 2)
+                add_ent({name = belt_name, position = {x = left_belt_in1_x + 1, y = lane_y + 1}, direction = DIR_SOUTH}, 1, 1)
+                add_ent({name = ug_name, position = {x = left_belt_in1_x + 1, y = lane_y + 2}, direction = DIR_SOUTH, type = "input"}, 1, 1)
+                add_ent({name = ug_name, position = {x = left_belt_in1_x + 1, y = col_start_y - 2}, direction = DIR_SOUTH, type = "output"}, 1, 1)
                 for bx = left_belt_in1_x, right_belt_in1_x do
-                    add_ent{name = belt_name, position = {x = bx, y = col_start_y - 1}, direction = (bx < right_belt_in1_x) and DIR_EAST or DIR_SOUTH}
+                    add_ent({name = belt_name, position = {x = bx, y = col_start_y - 1}, direction = (bx < right_belt_in1_x) and DIR_EAST or DIR_SOUTH}, 1, 1)
                 end
             end
 
             if ing2 and solid_lanes[ing2] then
                 local lane_y = bus_top_y + solid_lanes[ing2] - 1
-                add_ent{name = splitter_name, position = {x = left_belt_in2_x, y = lane_y + 0.5}, direction = DIR_EAST}
-                add_ent{name = ug_name, position = {x = left_belt_in2_x, y = lane_y + 1}, direction = DIR_SOUTH, type = "input"}
-                add_ent{name = ug_name, position = {x = left_belt_in2_x, y = col_start_y - 2}, direction = DIR_SOUTH, type = "output"}
+                add_ent({name = splitter_name, position = {x = left_belt_in2_x, y = lane_y + 0.5}, direction = DIR_EAST}, 1, 2)
+                add_ent({name = belt_name, position = {x = left_belt_in2_x + 1, y = lane_y + 1}, direction = DIR_SOUTH}, 1, 1)
+                add_ent({name = ug_name, position = {x = left_belt_in2_x + 1, y = lane_y + 2}, direction = DIR_SOUTH, type = "input"}, 1, 1)
+                add_ent({name = ug_name, position = {x = left_belt_in2_x + 1, y = col_start_y - 2}, direction = DIR_SOUTH, type = "output"}, 1, 1)
+                add_ent({name = belt_name, position = {x = left_belt_in2_x + 1, y = col_start_y - 1}, direction = DIR_WEST}, 1, 1)
+                add_ent({name = belt_name, position = {x = left_belt_in2_x, y = col_start_y - 1}, direction = DIR_SOUTH}, 1, 1)
             end
 
-            -- B) Подключение ВЫХОДНОГО конвейера колонны обратно в Главную Шину
+            -- B) Возврат готовой продукции колонны на Главную Шину
             if not step.fluid_out and solid_lanes[step.item_name] then
                 local out_lane_y = bus_top_y + solid_lanes[step.item_name] - 1
-                add_ent{name = ug_name, position = {x = center_x, y = col_start_y - 1}, direction = DIR_NORTH, type = "input"}
-                add_ent{name = ug_name, position = {x = center_x, y = out_lane_y + 1}, direction = DIR_NORTH, type = "output"}
-                add_ent{name = splitter_name, position = {x = center_x, y = out_lane_y - 0.5}, direction = DIR_EAST}
+                add_ent({name = ug_name, position = {x = center_x, y = col_start_y - 1}, direction = DIR_NORTH, type = "input"}, 1, 1)
+                add_ent({name = ug_name, position = {x = center_x, y = out_lane_y + 1}, direction = DIR_NORTH, type = "output"}, 1, 1)
+                add_ent({name = splitter_name, position = {x = center_x + 1, y = out_lane_y + 0.5}, direction = DIR_EAST}, 1, 2)
             end
 
-            -- C) Подключение ЖИДКОСТНОГО коллектора колонны к жидкостной шине
+            -- C) Врезка трубопровода колонны в жидкостную шину
             if #step.fluid_ings > 0 then
                 local f_name = step.fluid_ings[1].name
                 local f_lane_idx = fluid_lanes[f_name] or 1
                 local f_bus_y = fluid_bus_top_y + (f_lane_idx - 1) * 2
                 for py = f_bus_y, col_start_y - 1 do
-                    add_ent{name = "pipe", position = {x = left_pipe_x, y = py}, no_quality = true}
-                    add_ent{name = "pipe", position = {x = right_pipe_x, y = py}, no_quality = true}
+                    add_ent({name = "pipe", position = {x = left_pipe_x, y = py}, no_quality = true}, 1, 1)
+                    add_ent({name = "pipe", position = {x = right_pipe_x, y = py}, no_quality = true}, 1, 1)
                 end
-                add_ent{name = "pump", position = {x = left_pipe_x, y = col_start_y - 2}, direction = DIR_SOUTH}
-                add_ent{name = "pump", position = {x = right_pipe_x, y = col_start_y - 2}, direction = DIR_SOUTH}
             end
 
-            -- D) Непрерывные конвейерные ленты и трубы вдоль всей высоты колонны (без разрывов!)
+            -- D) Сплошные конвейеры и трубы внутри колонны
             for by = col_start_y, col_bottom_y do
-                -- Центральная лента выгрузки (идет на Север к шине)
-                add_ent{name = belt_name, position = {x = center_x, y = by}, direction = DIR_NORTH}
-                -- Внутренние ленты подачи сырья 1 (идут на Юг от шины)
-                add_ent{name = belt_name, position = {x = left_belt_in1_x, y = by}, direction = DIR_SOUTH}
-                add_ent{name = belt_name, position = {x = right_belt_in1_x, y = by}, direction = DIR_SOUTH}
+                add_ent({name = belt_name, position = {x = center_x, y = by}, direction = DIR_NORTH}, 1, 1)
+                add_ent({name = belt_name, position = {x = left_belt_in1_x, y = by}, direction = DIR_SOUTH}, 1, 1)
+                add_ent({name = belt_name, position = {x = right_belt_in1_x, y = by}, direction = DIR_SOUTH}, 1, 1)
 
-                -- Внешние ленты подачи сырья 2 (если в рецепте >= 2 твердых ингредиентов)
                 if #step.solid_ings >= 2 then
-                    add_ent{name = belt_name, position = {x = left_belt_in2_x, y = by}, direction = DIR_SOUTH}
-                    add_ent{name = belt_name, position = {x = right_belt_in2_x, y = by}, direction = DIR_SOUTH}
+                    add_ent({name = belt_name, position = {x = left_belt_in2_x, y = by}, direction = DIR_SOUTH}, 1, 1)
+                    add_ent({name = belt_name, position = {x = right_belt_in2_x, y = by}, direction = DIR_SOUTH}, 1, 1)
                 end
 
-                -- Непрерывная линия труб (если рецепт использует жидкости)
                 if #step.fluid_ings > 0 or step.fluid_out then
-                    add_ent{name = "pipe", position = {x = left_pipe_x, y = by}, no_quality = true}
-                    add_ent{name = "pipe", position = {x = right_pipe_x, y = by}, no_quality = true}
+                    add_ent({name = "pipe", position = {x = left_pipe_x, y = by}, no_quality = true}, 1, 1)
+                    add_ent({name = "pipe", position = {x = right_pipe_x, y = by}, no_quality = true}, 1, 1)
                 end
             end
 
-            -- E) Расстановка самих заводов вплотную друг к другу, манипуляторов, подстанций и маяков
+            -- E) Плотная расстановка заводов спина к спине, манипуляторов, патрубков и маяков
             for p = 0, pairs_count - 1 do
                 local m_y = col_start_y + p * m_size + math.floor(m_size / 2)
 
-                -- Левый завод (повернут жидкостным входом к левой трубе)
-                add_ent{
+                add_ent({
                     name = step.machine_name,
                     position = {x = left_m_x, y = m_y},
                     recipe = step.recipe_name,
                     direction = DIR_WEST
-                }
-                -- Манипуляторы левого завода (вход 1 и выход)
-                add_ent{name = fast_ins, position = {x = left_ins_in1_x, y = m_y - 1}, direction = DIR_EAST}
-                add_ent{name = fast_ins, position = {x = left_ins_out_x, y = m_y + 1}, direction = DIR_WEST}
-                add_ent{name = "medium-electric-pole", position = {x = left_ins_in1_x, y = m_y}}
+                }, m_size, m_size)
+
+                add_ent({name = fast_ins, position = {x = left_ins_in1_x, y = m_y - 1}, direction = DIR_EAST}, 1, 1)
+                add_ent({name = fast_ins, position = {x = left_ins_out_x, y = m_y + 1}, direction = DIR_WEST}, 1, 1)
+                add_ent({name = "medium-electric-pole", position = {x = left_ins_in1_x, y = m_y}}, 1, 1)
 
                 if #step.solid_ings >= 2 then
-                    add_ent{name = fast_ins, position = {x = left_ins_in2_x, y = m_y}, direction = DIR_WEST}
+                    add_ent({name = fast_ins, position = {x = left_ins_in2_x, y = m_y}, direction = DIR_WEST}, 1, 1)
                 end
                 if #step.fluid_ings > 0 or step.fluid_out then
-                    -- Соединительный патрубок от общей трубы прямо в порт завода
                     for px = left_pipe_x + 1, left_m_x - math.ceil(m_size / 2) do
-                        add_ent{name = "pipe", position = {x = px, y = m_y}, no_quality = true}
+                        add_ent({name = "pipe", position = {x = px, y = m_y}, no_quality = true}, 1, 1)
                     end
                 end
 
-                -- Правый завод (если нужен по счету)
                 if (p * 2 + 2) <= in_this_col then
-                    add_ent{
+                    add_ent({
                         name = step.machine_name,
                         position = {x = right_m_x, y = m_y},
                         recipe = step.recipe_name,
                         direction = DIR_EAST
-                    }
-                    add_ent{name = fast_ins, position = {x = right_ins_in1_x, y = m_y - 1}, direction = DIR_WEST}
-                    add_ent{name = fast_ins, position = {x = right_ins_out_x, y = m_y + 1}, direction = DIR_EAST}
-                    add_ent{name = "medium-electric-pole", position = {x = right_ins_in1_x, y = m_y}}
+                    }, m_size, m_size)
+
+                    add_ent({name = fast_ins, position = {x = right_ins_in1_x, y = m_y - 1}, direction = DIR_WEST}, 1, 1)
+                    add_ent({name = fast_ins, position = {x = right_ins_out_x, y = m_y + 1}, direction = DIR_EAST}, 1, 1)
+                    add_ent({name = "medium-electric-pole", position = {x = right_ins_in1_x, y = m_y}}, 1, 1)
 
                     if #step.solid_ings >= 2 then
-                        add_ent{name = fast_ins, position = {x = right_ins_in2_x, y = m_y}, direction = DIR_EAST}
+                        add_ent({name = fast_ins, position = {x = right_ins_in2_x, y = m_y}, direction = DIR_EAST}, 1, 1)
                     end
                     if #step.fluid_ings > 0 or step.fluid_out then
                         for px = right_m_x + math.ceil(m_size / 2), right_pipe_x - 1 do
-                            add_ent{name = "pipe", position = {x = px, y = m_y}, no_quality = true}
+                            add_ent({name = "pipe", position = {x = px, y = m_y}, no_quality = true}, 1, 1)
                         end
                     end
                 end
 
-                -- Ряды маяков и подстанций вдоль колонны
                 if state.use_beacons then
-                    add_ent{name = "beacon", position = {x = left_beacon_x, y = m_y}}
-                    add_ent{name = "beacon", position = {x = right_beacon_x, y = m_y}}
-                end
-                if p % 3 == 0 then
-                    add_ent{name = "substation", position = {x = center_x, y = m_y}}
+                    add_ent({name = "beacon", position = {x = left_beacon_x, y = m_y}}, 3, 3)
+                    add_ent({name = "beacon", position = {x = right_beacon_x, y = m_y}}, 3, 3)
                 end
             end
 
@@ -522,19 +535,7 @@ local function build_blueprint(player)
     local top_border_y = bus_top_y - 8
     local bottom_border_y = max_used_y + 8
 
-    -- 2. Прокладка непрерывной ГЛАВНОЙ ШИНЫ (Main Bus) сверху вдоль всех колонн (как на Фото 2)
-    for x = start_x - 4, end_x do
-        for lane = 1, total_solid_lanes do
-            local ly = bus_top_y + lane - 1
-            add_ent{name = belt_name, position = {x = x, y = ly}, direction = DIR_EAST}
-        end
-        for flane = 1, total_fluid_lanes do
-            local fy = fluid_bus_top_y + (flane - 1) * 2
-            add_ent{name = "pipe", position = {x = x, y = fy}, no_quality = true}
-        end
-    end
-
-    -- 3. Бетонная площадка и ЖД-контур со светофорами вокруг всего комплекса (авто-размер под завод)
+    -- 3. Бетонная площадка и ЖД-контур вокруг всего завода
     for x = start_x - 8, end_x + 4 do
         for y = top_border_y, bottom_border_y do
             if x == start_x - 8 or x == end_x + 4 or y == top_border_y or y == bottom_border_y then
@@ -546,78 +547,64 @@ local function build_blueprint(player)
     end
 
     if state.add_stations then
-        local rail_top = top_border_y + 2
-        local rail_bot = bottom_border_y - 2
-        local rail_left = start_x - 6
-        local rail_right = end_x + 2
-
-        -- Выравнивание координат рельсов по четной сетке Factorio (шаг 2 клетки)
-        rail_top = rail_top - (rail_top % 2)
-        rail_bot = rail_bot - (rail_bot % 2)
-        rail_left = rail_left - (rail_left % 2)
-        rail_right = rail_right - (rail_right % 2)
+        local rail_top = top_border_y + 2 - ((top_border_y + 2) % 2)
+        local rail_bot = bottom_border_y - 2 - ((bottom_border_y - 2) % 2)
+        local rail_left = start_x - 6 - ((start_x - 6) % 2)
+        local rail_right = end_x + 2 - ((end_x + 2) % 2)
 
         for rx = rail_left, rail_right, 2 do
-            add_ent{name = "straight-rail", position = {x = rx, y = rail_top}, direction = DIR_EAST, no_quality = true}
-            add_ent{name = "straight-rail", position = {x = rx, y = rail_bot}, direction = DIR_EAST, no_quality = true}
-            if rx % 16 == 0 then
-                add_ent{name = "rail-signal", position = {x = rx, y = rail_top + 2}, direction = DIR_EAST, no_quality = true}
-                add_ent{name = "rail-signal", position = {x = rx, y = rail_bot - 2}, direction = DIR_WEST, no_quality = true}
-            end
+            add_ent({name = "straight-rail", position = {x = rx, y = rail_top}, direction = DIR_EAST, no_quality = true}, 2, 2)
+            add_ent({name = "straight-rail", position = {x = rx, y = rail_bot}, direction = DIR_EAST, no_quality = true}, 2, 2)
+        end
+        for ry = rail_top + 2, rail_bot - 2, 2 do
+            add_ent({name = "straight-rail", position = {x = rail_left, y = ry}, direction = DIR_NORTH, no_quality = true}, 2, 2)
+            add_ent({name = "straight-rail", position = {x = rail_right, y = ry}, direction = DIR_NORTH, no_quality = true}, 2, 2)
         end
 
-        for ry = rail_top, rail_bot, 2 do
-            add_ent{name = "straight-rail", position = {x = rail_left, y = ry}, direction = DIR_NORTH, no_quality = true}
-            add_ent{name = "straight-rail", position = {x = rail_right, y = ry}, direction = DIR_NORTH, no_quality = true}
-        end
-
-        -- Станция погрузки готового продукта (Север)
-        add_ent{
+        add_ent({
             name = "train-stop",
             position = {x = rail_left + 14, y = rail_top + 2},
             direction = DIR_EAST,
             station = string.format("[item=%s] Вывоз (%d/м +1%%)", state.item, state.rate),
             trains_limit = 2,
             no_quality = true
-        }
+        }, 2, 2)
 
-        -- Станции разгрузки сырья (Юг) с выводом в Главную Шину
         local st_x = rail_left + 10
         for raw_name, raw_rate in pairs(calc.raw) do
             if st_x <= rail_right - 10 then
                 local fluid_flag = is_fluid(raw_name)
                 local icon_tag = fluid_flag and "fluid" or "item"
-                add_ent{
+                add_ent({
                     name = "train-stop",
                     position = {x = st_x, y = rail_bot - 2},
                     direction = DIR_WEST,
                     station = string.format("[%s=%s] Снабжение (%.0f/м)", icon_tag, raw_name, raw_rate * 60),
                     trains_limit = 2,
                     no_quality = true
-                }
-
-                if fluid_flag then
-                    add_ent{name = "pump", position = {x = st_x + 2, y = rail_bot - 2}, direction = DIR_NORTH}
-                    add_ent{name = "storage-tank", position = {x = st_x + 2, y = rail_bot - 5}}
-                else
-                    for offset = 1, 4 do
-                        add_ent{name = "steel-chest", position = {x = st_x + offset, y = rail_bot - 2}}
-                        add_ent{name = fast_ins, position = {x = st_x + offset, y = rail_bot - 3}, direction = DIR_NORTH}
-                        add_ent{name = belt_name, position = {x = st_x + offset, y = rail_bot - 4}, direction = DIR_NORTH}
-                    end
-                end
+                }, 2, 2)
                 st_x = st_x + 16
             end
         end
     end
 
-    -- 4. Выдача готового чертежа в руку (с безопасной очисткой конфликтующих клеток)
+    -- Собираем финальный плотный массив сущностей с последовательными номерами entity_number
+    local final_entities = {}
+    local eid = 1
+    for _, ent in pairs(bp_list) do
+        if ent then
+            ent.entity_number = eid
+            table.insert(final_entities, ent)
+            eid = eid + 1
+        end
+    end
+
     if player.clear_cursor() then
         player.cursor_stack.set_stack({name = "blueprint", count = 1})
-        player.cursor_stack.set_blueprint_entities(bp_entities)
+        player.cursor_stack.set_blueprint_entities(final_entities)
         player.cursor_stack.set_blueprint_tiles(bp_tiles)
         player.cursor_stack.label = string.format("ACB MainBus [%s]: %s (%d/м)", planet_id, state.item, state.rate)
-        player.print(string.format("[AutoCityBlock 1.2] Плотный конвейерный завод создан! Полос на шине: %d | Труб: %d | Объектов: %d", total_solid_lanes, total_fluid_lanes, #bp_entities))
+        player.print(string.format("[AutoCityBlock 1.2.1] Чертёж готов! Полос на шине: %d | Труб: %d | Зданий и конвейеров: %d", total_solid_lanes, total_fluid_lanes, #final_entities))
     end
 end
 
@@ -635,7 +622,7 @@ local function draw_helmod_gui(player)
         type = "frame",
         name = "cb_helmod_frame",
         direction = "vertical",
-        caption = "AutoCityBlock 1.2: Главная Шина, Плотные Колонны и Трубопровод"
+        caption = "AutoCityBlock 1.2.1: Главная Шина, Плотные Колонны и Трубопровод"
     }
     main_frame.auto_center = true
     main_frame.style.min_width = 880
@@ -662,7 +649,7 @@ local function draw_helmod_gui(player)
     opt_bar.add{type = "empty-widget"}.style.width = 12
     opt_bar.add{type = "checkbox", name = "cb_chk_beacons", caption = "⚡ Ряды маяков вдоль колонн", state = state.use_beacons}
     opt_bar.add{type = "empty-widget"}.style.width = 12
-    opt_bar.add{type = "checkbox", name = "cb_chk_rail", caption = "🚂 ЖД контур, станции и светофоры", state = state.add_stations}
+    opt_bar.add{type = "checkbox", name = "cb_chk_rail", caption = "🚂 ЖД контур и станции", state = state.add_stations}
 
     local content_frame = main_frame.add{type = "frame", style = "inside_shallow_frame", direction = "vertical"}
     content_frame.style.padding = 8
@@ -708,7 +695,7 @@ local function draw_helmod_gui(player)
     bot_bar.add{type = "button", name = "cb_btn_close", caption = "Закрыть"}
 end
 
-commands.add_command("cb", "Открыть AutoCityBlock 1.2", function(event)
+commands.add_command("cb", "Открыть AutoCityBlock 1.2.1", function(event)
     draw_helmod_gui(game.get_player(event.player_index))
 end)
 
