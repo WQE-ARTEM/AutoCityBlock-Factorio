@@ -1,8 +1,8 @@
 -- ============================================================================
--- AUTO CITY BLOCK 1.3.0: CRASH-PROOF MAIN BUS & CONNECTED PIPES EDITION
+-- AUTO CITY BLOCK 1.3.1: ZERO-CRASH MAIN BUS & CONNECTED PIPES EDITION
 -- ============================================================================
 
--- Безопасное чтение любого поля из C++ userdata Factorio 2.0/2.1 (без крашей)
+-- Безопасное чтение любого поля из C++ userdata Factorio
 local function safe_get(obj, key, default)
     if not obj then return default end
     local ok, val = pcall(function() return obj[key] end)
@@ -10,7 +10,14 @@ local function safe_get(obj, key, default)
     return default
 end
 
--- Безопасный вызов метода C++ userdata (например get_crafting_speed в 2.0+)
+-- Безопасная запись любого поля в C++ userdata (LuaStyle, LuaGuiElement, LuaItemStack)
+local function safe_set(obj, key, val)
+    if not obj then return false end
+    local ok = pcall(function() obj[key] = val end)
+    return ok
+end
+
+-- Безопасный вызов метода C++ userdata
 local function safe_call(obj, method, arg1, default)
     if not obj then return default end
     local ok, val = pcall(function()
@@ -24,10 +31,24 @@ local function safe_call(obj, method, arg1, default)
     return default
 end
 
+-- Безопасное добавление GUI элемента (если стиль не существует, создаст со стандартным)
+local function safe_add(parent, spec)
+    if not parent then return nil end
+    local ok, el = pcall(function() return parent.add(spec) end)
+    if ok and el then return el end
+    local fallback = {}
+    for k, v in pairs(spec) do
+        if k ~= "style" then fallback[k] = v end
+    end
+    local ok2, el2 = pcall(function() return parent.add(fallback) end)
+    if ok2 and el2 then return el2 end
+    return nil
+end
+
 -- Рекурсивный поиск элемента GUI по имени
 local function find_gui_element(parent, target_name)
-    if not parent or not parent.valid then return nil end
-    if parent.name == target_name then return parent end
+    if not parent or not safe_get(parent, "valid", false) then return nil end
+    if safe_get(parent, "name", "") == target_name then return parent end
     local children = safe_get(parent, "children", {})
     for _, child in pairs(children) do
         local found = find_gui_element(child, target_name)
@@ -81,7 +102,6 @@ local CATEGORY_MACHINE_PRIORITY = {
     ["organic"] = {"biochamber", "assembling-machine-3"}
 }
 
--- Эталонная таблица характеристик зданий (гарантирует точность, даже если API прототипа закрыт)
 local MACHINE_SPECS = {
     ["assembling-machine-1"] = {size = 3, speed = 0.5, prod = 0.0},
     ["assembling-machine-2"] = {size = 3, speed = 0.75, prod = 0.0},
@@ -102,17 +122,15 @@ local DIR_SOUTH = 8
 local DIR_WEST  = 12
 
 local function create_top_button(player)
-    if not player or not player.valid then return end
+    if not player or not safe_get(player, "valid", false) then return end
     local screen = safe_get(player.gui, "screen", nil)
     if screen and not safe_get(screen, "cb_top_toggle_btn", nil) then
-        pcall(function()
-            screen.add{
-                type = "button",
-                name = "cb_top_toggle_btn",
-                caption = "⚙️ AutoCityBlock 1.3",
-                style = "button"
-            }
-        end)
+        safe_add(screen, {
+            type = "button",
+            name = "cb_top_toggle_btn",
+            caption = "⚙️ AutoCityBlock 1.3.1",
+            style = "button"
+        })
     end
 end
 
@@ -176,7 +194,6 @@ local function get_machine_info(machine_name)
     local spec = MACHINE_SPECS[machine_name] or {size = 3, speed = 1.0, prod = 0.0}
     local ent_proto = has_entity(machine_name) and prototypes.entity[machine_name] or nil
 
-    -- В Factorio 2.0/2.1 используется метод get_crafting_speed(), а в 1.1 поле crafting_speed
     local api_speed = safe_call(ent_proto, "get_crafting_speed", "normal", nil)
         or safe_call(ent_proto, "get_crafting_speed", nil, nil)
         or safe_get(ent_proto, "crafting_speed", nil)
@@ -677,7 +694,7 @@ local function build_blueprint(player)
 
     if player.clear_cursor() then
         player.cursor_stack.set_stack({name = "blueprint", count = 1})
-        local ok_bp, err_bp = pcall(function()
+        local ok_bp = pcall(function()
             player.cursor_stack.set_blueprint_entities(final_entities)
         end)
         if not ok_bp then
@@ -688,175 +705,184 @@ local function build_blueprint(player)
             pcall(function() player.cursor_stack.set_blueprint_entities(final_entities) end)
         end
         pcall(function() player.cursor_stack.set_blueprint_tiles(bp_tiles) end)
-        player.cursor_stack.label = string.format("ACB MainBus [%s]: %s (%d/м)", planet_id, state.item, state.rate)
-        player.print(string.format("[AutoCityBlock 1.3] Завод создан! Полос на шине: %d | Труб: %d | Объектов: %d", total_solid_lanes, total_fluid_lanes, #final_entities))
+        safe_set(player.cursor_stack, "label", string.format("ACB MainBus [%s]: %s (%d/м)", planet_id, state.item, state.rate))
+        player.print(string.format("[AutoCityBlock 1.3.1] Завод создан! Полос на шине: %d | Труб: %d | Объектов: %d", total_solid_lanes, total_fluid_lanes, #final_entities))
     end
 end
 
 -- ============================================================================
--- ГРАФИЧЕСКИЙ ИНТЕРФЕЙС В СТИЛЕ HELMOD
+-- ГРАФИЧЕСКИЙ ИНТЕРФЕЙС В СТИЛЕ HELMOD (ПОЛНОСТЬЮ ЗАЩИЩЕННЫЙ ОТ LUA STYLE ОШИБОК)
 -- ============================================================================
 local function draw_helmod_gui(player)
-    if not player or not player.valid then return end
+    if not player or not safe_get(player, "valid", false) then return end
     local screen = safe_get(player.gui, "screen", nil)
     if not screen then return end
 
     local old_frame = safe_get(screen, "cb_helmod_frame", nil)
-    if old_frame then old_frame.destroy() end
+    if old_frame then pcall(function() old_frame.destroy() end) end
 
     local state = get_state(player.index)
     run_calculation(player)
     local calc = state.last_calc
 
-    local main_frame = screen.add{
+    local main_frame = safe_add(screen, {
         type = "frame",
         name = "cb_helmod_frame",
         direction = "vertical",
-        caption = "AutoCityBlock 1.3: Главная Шина, Плотные Колонны и Трубопровод"
-    }
-    main_frame.auto_center = true
-    main_frame.style.min_width = 880
+        caption = "AutoCityBlock 1.3.1: Главная Шина, Плотные Колонны и Трубопровод"
+    })
+    if not main_frame then return end
 
-    local top_bar = main_frame.add{type = "frame", style = "subheader_frame", direction = "horizontal"}
-    top_bar.add{type = "label", caption = "Предмет:", style = "caption_label"}
-    top_bar.add{type = "choose-elem-button", name = "cb_elem_item", elem_type = "item", item = state.item}
-    top_bar.add{type = "label", caption = "  Кол-во/м (+1%):", style = "caption_label"}
-    top_bar.add{type = "textfield", name = "cb_input_rate", text = tostring(state.rate), numeric = true}.style.width = 65
+    safe_call(main_frame, "force_auto_center", nil, nil)
+    safe_set(main_frame, "auto_center", true)
+    safe_set(main_frame.style, "minimal_width", 880)
+
+    local top_bar = safe_add(main_frame, {type = "flow", direction = "horizontal"})
+    safe_add(top_bar, {type = "label", caption = "Предмет:"})
+    safe_add(top_bar, {type = "choose-elem-button", name = "cb_elem_item", elem_type = "item", item = state.item})
+    safe_add(top_bar, {type = "label", caption = "  Кол-во/м (+1%):"})
+    local tf = safe_add(top_bar, {type = "textfield", name = "cb_input_rate", text = tostring(state.rate), numeric = true})
+    if tf then safe_set(tf.style, "width", 70) end
 
     local q_items = {} for _, q in ipairs(QUALITIES) do table.insert(q_items, q.caption) end
-    top_bar.add{type = "label", caption = "  Качество:", style = "caption_label"}
-    top_bar.add{type = "drop-down", name = "cb_drop_quality", items = q_items, selected_index = state.quality_index}
+    safe_add(top_bar, {type = "label", caption = "  Качество:"})
+    safe_add(top_bar, {type = "drop-down", name = "cb_drop_quality", items = q_items, selected_index = state.quality_index})
 
     local p_items = {} for _, p in ipairs(PLANETS) do table.insert(p_items, p.caption) end
-    top_bar.add{type = "label", caption = "  Планета:", style = "caption_label"}
-    top_bar.add{type = "drop-down", name = "cb_drop_planet", items = p_items, selected_index = state.planet_index}
+    safe_add(top_bar, {type = "label", caption = "  Планета:"})
+    safe_add(top_bar, {type = "drop-down", name = "cb_drop_planet", items = p_items, selected_index = state.planet_index})
 
-    local opt_bar = main_frame.add{type = "flow", direction = "horizontal"}
-    opt_bar.style.padding = 6
+    local opt_bar = safe_add(main_frame, {type = "flow", direction = "horizontal"})
     local m_items = {} for _, m in ipairs(MODULE_MODES) do table.insert(m_items, m.caption) end
-    opt_bar.add{type = "label", caption = "Модули:", style = "bold_label"}
-    opt_bar.add{type = "drop-down", name = "cb_drop_modules", items = m_items, selected_index = state.module_index}
-    opt_bar.add{type = "empty-widget"}.style.width = 12
-    opt_bar.add{type = "checkbox", name = "cb_chk_beacons", caption = "⚡ Ряды маяков вдоль колонн", state = state.use_beacons}
-    opt_bar.add{type = "empty-widget"}.style.width = 12
-    opt_bar.add{type = "checkbox", name = "cb_chk_rail", caption = "🚂 ЖД контур и станции", state = state.add_stations}
+    safe_add(opt_bar, {type = "label", caption = "Модули:"})
+    safe_add(opt_bar, {type = "drop-down", name = "cb_drop_modules", items = m_items, selected_index = state.module_index})
+    safe_add(opt_bar, {type = "checkbox", name = "cb_chk_beacons", caption = "  ⚡ Ряды маяков вдоль колонн", state = state.use_beacons})
+    safe_add(opt_bar, {type = "checkbox", name = "cb_chk_rail", caption = "  🚂 ЖД контур и станции", state = state.add_stations})
 
-    local content_frame = main_frame.add{type = "frame", style = "inside_shallow_frame", direction = "vertical"}
-    content_frame.style.padding = 8
-    local scroll = content_frame.add{type = "scroll-pane", direction = "vertical"}
-    scroll.style.max_height = 340
-
-    local tbl = scroll.add{type = "table", column_count = 6, draw_horizontal_lines = true}
-    for _, h in ipairs({"Этап (Колонна)", "Станок", "Заводов (Точно / В ряду)", "Продуктивность", "Поток (/мин)", "Подача (Ленты + Трубы)"}) do
-        tbl.add{type = "label", caption = h, style = "bold_label"}
+    local scroll = safe_add(main_frame, {type = "scroll-pane", direction = "vertical"})
+    if scroll then
+        safe_set(scroll.style, "maximal_height", 340)
+        safe_set(scroll.style, "minimal_height", 180)
     end
 
-    if calc and calc.steps then
-        for _, step in ipairs(calc.steps) do
-            local r_flow = tbl.add{type = "flow", direction = "horizontal"}
-            pcall(function()
-                r_flow.add{type = "sprite-button", sprite = "recipe/" .. step.recipe_name, style = "slot_button", enabled = false}
-            end)
-            r_flow.add{type = "label", caption = step.recipe_name}
+    local tbl = safe_add(scroll or main_frame, {type = "table", column_count = 6, draw_horizontal_lines = true})
+    if tbl then
+        for _, h in ipairs({"Этап (Колонна)", "Станок", "Заводов (Точно / В ряду)", "Продуктивность", "Поток (/мин)", "Подача (Ленты + Трубы)"}) do
+            safe_add(tbl, {type = "label", caption = "  " .. h .. "  "})
+        end
 
-            local m_flow = tbl.add{type = "flow", direction = "horizontal"}
-            pcall(function()
-                m_flow.add{type = "sprite-button", sprite = "item/" .. step.machine_name, style = "slot_button", enabled = false}
-            end)
-            m_flow.add{type = "label", caption = string.format("x%.2f ск.", step.speed)}
+        if calc and calc.steps then
+            for _, step in ipairs(calc.steps) do
+                local r_flow = safe_add(tbl, {type = "flow", direction = "horizontal"})
+                safe_add(r_flow, {type = "sprite-button", sprite = "recipe/" .. step.recipe_name, enabled = false})
+                safe_add(r_flow, {type = "label", caption = step.recipe_name})
 
-            tbl.add{type = "label", caption = string.format("%.2f -> [color=green]%d шт.[/color]", step.exact_machines, math.ceil(step.exact_machines))}
-            tbl.add{type = "label", caption = string.format("+%d%%", math.floor(step.prod_bonus * 100 + 0.5))}
-            tbl.add{type = "label", caption = string.format("%.1f/м", step.output_per_sec * 60)}
+                local m_flow = safe_add(tbl, {type = "flow", direction = "horizontal"})
+                safe_add(m_flow, {type = "sprite-button", sprite = "item/" .. step.machine_name, enabled = false})
+                safe_add(m_flow, {type = "label", caption = string.format("x%.2f ск.", step.speed)})
 
-            local ing_flow = tbl.add{type = "flow", direction = "horizontal"}
-            for _, ing in ipairs(step.ingredients) do
-                local spr = is_fluid(ing.name) and ("fluid/" .. ing.name) or ("item/" .. ing.name)
-                pcall(function()
-                    ing_flow.add{
+                safe_add(tbl, {type = "label", caption = string.format("  %.2f -> [color=green]%d шт.[/color]  ", step.exact_machines, math.ceil(step.exact_machines))})
+                safe_add(tbl, {type = "label", caption = string.format("  +%d%%  ", math.floor(step.prod_bonus * 100 + 0.5))})
+                safe_add(tbl, {type = "label", caption = string.format("  %.1f/м  ", step.output_per_sec * 60)})
+
+                local ing_flow = safe_add(tbl, {type = "flow", direction = "horizontal"})
+                for _, ing in ipairs(step.ingredients) do
+                    local spr = is_fluid(ing.name) and ("fluid/" .. ing.name) or ("item/" .. ing.name)
+                    safe_add(ing_flow, {
                         type = "sprite-button",
                         sprite = spr,
                         number = math.ceil(step.crafts_per_sec * 60 * ing.amount),
-                        style = "slot_button",
                         enabled = false
-                    }
-                end)
+                    })
+                end
             end
         end
     end
 
-    local bot_bar = main_frame.add{type = "frame", style = "subheader_frame", direction = "horizontal"}
-    bot_bar.add{type = "empty-widget"}.style.horizontally_stretchable = true
-    bot_bar.add{type = "button", name = "cb_btn_recalc", caption = "Пересчитать"}
-    bot_bar.add{type = "button", name = "cb_btn_blueprint", caption = "Сгенерировать Завод с Главной Шиной и Трубами (+1%)", style = "confirm_button"}
-    bot_bar.add{type = "button", name = "cb_btn_close", caption = "Закрыть"}
+    local bot_bar = safe_add(main_frame, {type = "flow", direction = "horizontal"})
+    safe_add(bot_bar, {type = "button", name = "cb_btn_recalc", caption = "🔄 Пересчитать"})
+    safe_add(bot_bar, {type = "button", name = "cb_btn_blueprint", caption = "📐 Сгенерировать Завод с Главной Шиной и Трубами (+1%)", style = "confirm_button"})
+    safe_add(bot_bar, {type = "button", name = "cb_btn_close", caption = "✖ Закрыть"})
 end
 
-commands.add_command("cb", "Открыть AutoCityBlock 1.3", function(event)
-    local p = game.get_player(event.player_index)
-    draw_helmod_gui(p)
+commands.add_command("cb", "Открыть AutoCityBlock 1.3.1", function(event)
+    pcall(function()
+        local p = game.get_player(event.player_index)
+        draw_helmod_gui(p)
+    end)
 end)
 
 script.on_event(defines.events.on_gui_click, function(event)
-    local el = event.element
-    if not el or not el.valid then return end
-    local name = el.name
-    local player = game.get_player(event.player_index)
-    if not player then return end
+    local ok, err = pcall(function()
+        local el = event.element
+        if not el or not safe_get(el, "valid", false) then return end
+        local name = safe_get(el, "name", "")
+        local player = game.get_player(event.player_index)
+        if not player then return end
 
-    local screen = safe_get(player.gui, "screen", nil)
-    local frame = screen and safe_get(screen, "cb_helmod_frame", nil) or nil
+        local screen = safe_get(player.gui, "screen", nil)
+        local frame = screen and safe_get(screen, "cb_helmod_frame", nil) or nil
 
-    if frame then
-        local rate_input = find_gui_element(frame, "cb_input_rate")
-        if rate_input then
-            get_state(player.index).rate = tonumber(rate_input.text) or 100
+        if frame then
+            local rate_input = find_gui_element(frame, "cb_input_rate")
+            if rate_input then
+                get_state(player.index).rate = tonumber(safe_get(rate_input, "text", "120")) or 120
+            end
         end
-    end
 
-    if name == "cb_top_toggle_btn" then
-        draw_helmod_gui(player)
-    elseif name == "cb_btn_recalc" then
-        draw_helmod_gui(player)
-    elseif name == "cb_btn_blueprint" then
-        build_blueprint(player)
-        if frame and frame.valid then frame.destroy() end
-    elseif name == "cb_btn_close" then
-        if frame and frame.valid then frame.destroy() end
+        if name == "cb_top_toggle_btn" or name == "cb_btn_recalc" then
+            draw_helmod_gui(player)
+        elseif name == "cb_btn_blueprint" then
+            build_blueprint(player)
+            if frame and safe_get(frame, "valid", false) then frame.destroy() end
+        elseif name == "cb_btn_close" then
+            if frame and safe_get(frame, "valid", false) then frame.destroy() end
+        end
+    end)
+    if not ok then
+        local p = game.get_player(event.player_index)
+        if p then p.print("[AutoCityBlock Warning] " .. tostring(err)) end
     end
 end)
 
 script.on_event(defines.events.on_gui_elem_changed, function(event)
-    local el = event.element
-    if el and el.valid and el.name == "cb_elem_item" then
-        if el.elem_value then
-            get_state(event.player_index).item = el.elem_value
-            draw_helmod_gui(game.get_player(event.player_index))
+    pcall(function()
+        local el = event.element
+        if el and safe_get(el, "valid", false) and safe_get(el, "name", "") == "cb_elem_item" then
+            local val = safe_get(el, "elem_value", nil)
+            if val then
+                get_state(event.player_index).item = val
+                draw_helmod_gui(game.get_player(event.player_index))
+            end
         end
-    end
+    end)
 end)
 
 script.on_event(defines.events.on_gui_selection_state_changed, function(event)
-    local el = event.element
-    if not el or not el.valid then return end
-    local name = el.name
-    local player = game.get_player(event.player_index)
-    local state = get_state(player.index)
-    if name == "cb_drop_quality" then state.quality_index = el.selected_index
-    elseif name == "cb_drop_planet" then state.planet_index = el.selected_index
-    elseif name == "cb_drop_modules" then state.module_index = el.selected_index
-    else return end
-    draw_helmod_gui(player)
+    pcall(function()
+        local el = event.element
+        if not el or not safe_get(el, "valid", false) then return end
+        local name = safe_get(el, "name", "")
+        local player = game.get_player(event.player_index)
+        local state = get_state(player.index)
+        if name == "cb_drop_quality" then state.quality_index = el.selected_index
+        elseif name == "cb_drop_planet" then state.planet_index = el.selected_index
+        elseif name == "cb_drop_modules" then state.module_index = el.selected_index
+        else return end
+        draw_helmod_gui(player)
+    end)
 end)
 
 script.on_event(defines.events.on_gui_checked_state_changed, function(event)
-    local el = event.element
-    if not el or not el.valid then return end
-    local name = el.name
-    local player = game.get_player(event.player_index)
-    local state = get_state(player.index)
-    if name == "cb_chk_beacons" then state.use_beacons = el.state
-    elseif name == "cb_chk_rail" then state.add_stations = el.state
-    else return end
-    draw_helmod_gui(player)
+    pcall(function()
+        local el = event.element
+        if not el or not safe_get(el, "valid", false) then return end
+        local name = safe_get(el, "name", "")
+        local player = game.get_player(event.player_index)
+        local state = get_state(player.index)
+        if name == "cb_chk_beacons" then state.use_beacons = el.state
+        elseif name == "cb_chk_rail" then state.add_stations = el.state
+        else return end
+        draw_helmod_gui(player)
+    end)
 end)
