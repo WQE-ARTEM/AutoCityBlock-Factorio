@@ -1,5 +1,5 @@
 -- ============================================================================
--- AUTO CITY BLOCK 1.3.2: GUARANTEED RENDER & CLEAN RAILS EDITION
+-- AUTO CITY BLOCK 1.3.3: DIRECT DRAW GUARANTEED EDITION
 -- ============================================================================
 
 local function safe_get(obj, key, default)
@@ -42,8 +42,7 @@ end
 local function find_gui_element(parent, target_name)
     if not parent or not safe_get(parent, "valid", false) then return nil end
     if safe_get(parent, "name", "") == target_name then return parent end
-    local children = safe_get(parent, "children", {})
-    for _, child in pairs(children) do
+    for _, child in pairs(safe_get(parent, "children", {})) do
         local found = find_gui_element(child, target_name)
         if found then return found end
     end
@@ -109,16 +108,13 @@ local MACHINE_SPECS = {
     ["oil-refinery"]         = {size = 5, speed = 1.0, prod = 0.0}
 }
 
-local DIR_NORTH = 0
-local DIR_EAST  = 4
-local DIR_SOUTH = 8
-local DIR_WEST  = 12
+local DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST = 0, 4, 8, 12
 
 local function create_top_button(player)
     if not player or not safe_get(player, "valid", false) then return end
     local screen = safe_get(player.gui, "screen", nil)
     if screen and not safe_get(screen, "cb_top_toggle_btn", nil) then
-        safe_add(screen, {type = "button", name = "cb_top_toggle_btn", caption = "⚙️ AutoCityBlock 1.3.2", style = "button"})
+        safe_add(screen, {type = "button", name = "cb_top_toggle_btn", caption = "⚙️ AutoCityBlock 1.3.3", style = "button"})
     end
 end
 
@@ -133,23 +129,16 @@ script.on_configuration_changed(function()
 end)
 
 script.on_event(defines.events.on_player_created, function(event)
-    local p = game.get_player(event.player_index)
-    create_top_button(p)
+    create_top_button(game.get_player(event.player_index))
 end)
 
 local function get_state(player_index)
     if not storage.player_state then storage.player_state = {} end
     if not storage.player_state[player_index] then
         storage.player_state[player_index] = {
-            item = "battery",
-            rate = 120,
-            quality_index = 1,
-            planet_index = 1,
-            module_index = 2,
-            use_beacons = true,
-            use_world_tech = true,
-            add_stations = true,
-            last_calc = nil
+            item = "battery", rate = 120, quality_index = 1,
+            planet_index = 1, module_index = 2, use_beacons = true,
+            use_world_tech = true, add_stations = true, last_calc = nil
         }
     end
     return storage.player_state[player_index]
@@ -166,9 +155,7 @@ local function is_fluid(name)
 end
 
 local function get_belt_set()
-    if has_entity("turbo-transport-belt") then
-        return "turbo-transport-belt", "turbo-underground-belt", "turbo-splitter"
-    end
+    if has_entity("turbo-transport-belt") then return "turbo-transport-belt", "turbo-underground-belt", "turbo-splitter" end
     return "express-transport-belt", "express-underground-belt", "express-splitter"
 end
 
@@ -181,9 +168,7 @@ end
 local function get_machine_info(machine_name)
     local spec = MACHINE_SPECS[machine_name] or {size = 3, speed = 1.0, prod = 0.0}
     local ent_proto = has_entity(machine_name) and prototypes.entity[machine_name] or nil
-    local api_speed = safe_call(ent_proto, "get_crafting_speed", "normal", nil)
-        or safe_call(ent_proto, "get_crafting_speed", nil, nil)
-        or safe_get(ent_proto, "crafting_speed", nil)
+    local api_speed = safe_call(ent_proto, "get_crafting_speed", "normal", nil) or safe_call(ent_proto, "get_crafting_speed", nil, nil) or safe_get(ent_proto, "crafting_speed", nil)
     return tonumber(api_speed) or spec.speed, spec.size, spec.prod
 end
 
@@ -203,16 +188,11 @@ end
 local function find_recipe_for_item(force, item_name, use_world_tech, planet_id)
     local f_recipes = safe_get(force, "recipes", {})
     local p_recipes = safe_get(prototypes, "recipe", {})
-
     local direct_proto = safe_get(p_recipes, item_name, nil)
-    local direct_force = safe_get(f_recipes, item_name, nil)
-    if direct_proto then
-        return direct_proto, direct_force
-    end
+    if direct_proto then return direct_proto, safe_get(f_recipes, item_name, nil) end
 
     for name, proto in pairs(p_recipes) do
-        local products = safe_get(proto, "products", {})
-        for _, product in pairs(products) do
+        for _, product in pairs(safe_get(proto, "products", {})) do
             if safe_get(product, "name", nil) == item_name then
                 return proto, safe_get(f_recipes, name, nil)
             end
@@ -224,7 +204,6 @@ end
 local function calculate_chain(force, item_name, rate_per_sec, state, chain_steps, raw_totals, depth)
     depth = depth or 0
     local raw_map = PLANET_RAW[PLANETS[state.planet_index].id] or PLANET_RAW.nauvis
-
     if depth > 10 or raw_map[item_name] then
         raw_totals[item_name] = (raw_totals[item_name] or 0) + rate_per_sec
         return
@@ -237,14 +216,10 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
     end
 
     local r_name = safe_get(proto, "name", item_name)
-    local products = safe_get(proto, "products", {})
     local base_output = 1
-    for _, p in pairs(products) do
+    for _, p in pairs(safe_get(proto, "products", {})) do
         if safe_get(p, "name", nil) == item_name then
-            local amt = safe_get(p, "amount", nil)
-            if not amt then
-                amt = ((safe_get(p, "amount_min", 1) + safe_get(p, "amount_max", 1)) / 2)
-            end
+            local amt = safe_get(p, "amount", nil) or ((safe_get(p, "amount_min", 1) + safe_get(p, "amount_max", 1)) / 2)
             base_output = amt * safe_get(p, "probability", 1)
             break
         end
@@ -258,20 +233,13 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
 
     local speed_mult = math.max(0.25, 1.0 + (MODULE_MODES[state.module_index] or MODULE_MODES[1]).speed + (state.use_beacons and 1.5 or 0))
     local final_speed = base_speed * QUALITIES[state.quality_index].mult * speed_mult
+    local exact_machines = ((rate_per_sec / math.max(0.01, base_output * (1 + prod_bonus))) * (tonumber(safe_get(proto, "energy", 0.5)) or 0.5)) / final_speed
 
-    local effective_output = math.max(0.01, base_output * (1 + prod_bonus))
-    local crafts_per_sec = rate_per_sec / effective_output
-    local exact_machines = (crafts_per_sec * (tonumber(safe_get(proto, "energy", 0.5)) or 0.5)) / final_speed
-
-    local clean_ings, solid_ings, fluid_ings = {}, {}, {}
+    local clean_ings = {}
     for _, ing in pairs(safe_get(proto, "ingredients", {})) do
         local iname = safe_get(ing, "name", nil)
         local iamt = tonumber(safe_get(ing, "amount", 1)) or 1
-        if iname then
-            local entry = {name = iname, amount = iamt}
-            table.insert(clean_ings, entry)
-            if is_fluid(iname) then table.insert(fluid_ings, entry) else table.insert(solid_ings, entry) end
-        end
+        if iname then table.insert(clean_ings, {name = iname, amount = iamt}) end
     end
 
     if not chain_steps[r_name] then
@@ -279,18 +247,17 @@ local function calculate_chain(force, item_name, rate_per_sec, state, chain_step
             recipe_name = r_name, item_name = item_name, machine_name = machine_name,
             machine_size = m_size, exact_machines = 0, output_per_sec = 0,
             crafts_per_sec = 0, prod_bonus = prod_bonus, speed = final_speed,
-            ingredients = clean_ings, solid_ings = solid_ings, fluid_ings = fluid_ings,
-            fluid_out = is_fluid(item_name), order = depth
+            ingredients = clean_ings, order = depth
         }
     end
 
     local step = chain_steps[r_name]
     step.exact_machines = step.exact_machines + exact_machines
     step.output_per_sec = step.output_per_sec + rate_per_sec
-    step.crafts_per_sec = step.crafts_per_sec + crafts_per_sec
+    step.crafts_per_sec = step.crafts_per_sec + (rate_per_sec / math.max(0.01, base_output * (1 + prod_bonus)))
 
     for _, ing in ipairs(clean_ings) do
-        calculate_chain(force, ing.name, crafts_per_sec * ing.amount, state, chain_steps, raw_totals, depth + 1)
+        calculate_chain(force, ing.name, (rate_per_sec / math.max(0.01, base_output * (1 + prod_bonus))) * ing.amount, state, chain_steps, raw_totals, depth + 1)
     end
 end
 
@@ -300,14 +267,12 @@ local function run_calculation(player)
     local chain_steps, raw_totals = {}, {}
     calculate_chain(player.force, state.item, ((state.rate * 1.01) / 60.0), state, chain_steps, raw_totals, 1)
 
-    -- Страховка: если цепочка пустая, форсируем базовый рецепт выбранного предмета
     if next(chain_steps) == nil then
         chain_steps[state.item] = {
             recipe_name = state.item, item_name = state.item, machine_name = "assembling-machine-3",
             machine_size = 3, exact_machines = math.max(1, state.rate / 60), output_per_sec = state.rate / 60,
             crafts_per_sec = state.rate / 60, prod_bonus = 0, speed = 1.25,
-            ingredients = {{name = "iron-plate", amount = 1}}, solid_ings = {{name = "iron-plate", amount = 1}},
-            fluid_ings = {}, fluid_out = false, order = 1
+            ingredients = {}, order = 1
         }
         raw_totals["iron-plate"] = state.rate / 60
     end
@@ -324,48 +289,27 @@ local function build_blueprint(player)
     local calc = state.last_calc
     if not calc or #calc.steps == 0 then return end
 
-    local belt_name, ug_name, splitter_name = get_belt_set()
+    local belt_name = get_belt_set()
     local fast_ins = get_inserter_name()
-    local occupied, bp_list, bp_tiles = {}, {}, {}
+    local bp_list, bp_tiles = {}, {}
 
-    local function mark_area(cx, cy, w, h, idx)
-        for x = math.floor(cx - w/2 + 0.01), math.floor(cx + w/2 - 0.01) do
-            for y = math.floor(cy - h/2 + 0.01), math.floor(cy + h/2 - 0.01) do
-                local key = x .. ":" .. y
-                if occupied[key] then bp_list[occupied[key]] = nil end
-                occupied[key] = idx
-            end
+    local function add_ent(t)
+        if not has_entity(t.name) then return end
+        table.insert(bp_list, t)
+    end
+
+    local bus_top_y, col_start_y = -32, -20
+    local start_x, cur_x, max_used_y = -40, -40, col_start_y + 40
+
+    -- Главная шина сверху
+    local estimated_end_x = start_x + (#calc.steps * 24) + 40
+    for x = start_x - 4, estimated_end_x do
+        for lane = 1, 4 do
+            add_ent({name = belt_name, position = {x = x, y = bus_top_y + lane - 1}, direction = DIR_EAST})
         end
     end
 
-    local function add_ent(t, w, h)
-        if not has_entity(t.name) then return end
-        w, h = w or 1, h or 1
-        local idx = #bp_list + 1
-        bp_list[idx] = t
-        mark_area(t.position.x, t.position.y, w, h, idx)
-    end
-
-    local solid_lanes, fluid_lanes, s_idx, f_idx = {}, {}, 1, 1
-    for raw_name, _ in pairs(calc.raw) do solid_lanes[raw_name] = s_idx; s_idx = s_idx + 1 end
-    for _, step in ipairs(calc.steps) do
-        if is_fluid(step.item_name) then fluid_lanes[step.item_name] = f_idx; f_idx = f_idx + 1
-        else solid_lanes[step.item_name] = s_idx; s_idx = s_idx + 1 end
-    end
-
-    local total_solid_lanes = math.max(4, s_idx - 1)
-    local total_fluid_lanes = math.max(2, f_idx - 1)
-    local bus_top_y, fluid_bus_top_y, col_start_y = -32, -32 + total_solid_lanes + 2, -32 + total_solid_lanes + total_fluid_lanes * 2 + 8
-    local start_x, cur_x, max_used_y = -40, -40, col_start_y + 40
-
-    -- Главная Шина сверху
-    local estimated_end_x = start_x + (#calc.steps * 24) + 40
-    for x = start_x - 4, estimated_end_x do
-        for lane = 1, total_solid_lanes do add_ent({name = belt_name, position = {x = x, y = bus_top_y + lane - 1}, direction = DIR_EAST}, 1, 1) end
-        for flane = 1, total_fluid_lanes do add_ent({name = "pipe", position = {x = x, y = fluid_bus_top_y + (flane - 1) * 2}, no_quality = true}, 1, 1) end
-    end
-
-    -- Производственные колонны
+    -- Колонны заводов
     for _, step in ipairs(calc.steps) do
         local m_size = step.machine_size or 3
         local pairs_count = math.ceil(math.max(1, math.ceil(step.exact_machines)) / 2)
@@ -374,35 +318,30 @@ local function build_blueprint(player)
 
         local left_m_x = center_x - 3 - math.floor(m_size / 2)
         local right_m_x = center_x + 3 + math.floor(m_size / 2)
-        local left_pipe_x, right_pipe_x = left_m_x - 3, right_m_x + 3
         local col_bottom_y = col_start_y + pairs_count * m_size
         if col_bottom_y > max_used_y then max_used_y = col_bottom_y end
 
-        -- Сплошные конвейеры и трубы внутри колонны
         for by = col_start_y, col_bottom_y do
-            add_ent({name = belt_name, position = {x = center_x, y = by}, direction = DIR_NORTH}, 1, 1)
-            add_ent({name = belt_name, position = {x = center_x - 3, y = by}, direction = DIR_SOUTH}, 1, 1)
-            add_ent({name = belt_name, position = {x = center_x + 3, y = by}, direction = DIR_SOUTH}, 1, 1)
-            add_ent({name = "pipe", position = {x = left_pipe_x, y = by}, no_quality = true}, 1, 1)
-            add_ent({name = "pipe", position = {x = right_pipe_x, y = by}, no_quality = true}, 1, 1)
+            add_ent({name = belt_name, position = {x = center_x, y = by}, direction = DIR_NORTH})
+            add_ent({name = belt_name, position = {x = center_x - 3, y = by}, direction = DIR_SOUTH})
+            add_ent({name = belt_name, position = {x = center_x + 3, y = by}, direction = DIR_SOUTH})
         end
 
-        -- Заводы спина к спине
         for p = 0, pairs_count - 1 do
             local m_y = col_start_y + p * m_size + math.floor(m_size / 2)
-            add_ent({name = step.machine_name, position = {x = left_m_x, y = m_y}, recipe = step.recipe_name, direction = DIR_WEST}, m_size, m_size)
-            add_ent({name = fast_ins, position = {x = center_x - 2, y = m_y - 1}, direction = DIR_EAST}, 1, 1)
-            add_ent({name = fast_ins, position = {x = center_x - 1, y = m_y + 1}, direction = DIR_WEST}, 1, 1)
-            add_ent({name = "medium-electric-pole", position = {x = center_x - 2, y = m_y}}, 1, 1)
+            add_ent({name = step.machine_name, position = {x = left_m_x, y = m_y}, recipe = step.recipe_name, direction = DIR_WEST})
+            add_ent({name = fast_ins, position = {x = center_x - 2, y = m_y - 1}, direction = DIR_EAST})
+            add_ent({name = fast_ins, position = {x = center_x - 1, y = m_y + 1}, direction = DIR_WEST})
+            add_ent({name = "medium-electric-pole", position = {x = center_x - 2, y = m_y}})
 
-            add_ent({name = step.machine_name, position = {x = right_m_x, y = m_y}, recipe = step.recipe_name, direction = DIR_EAST}, m_size, m_size)
-            add_ent({name = fast_ins, position = {x = center_x + 2, y = m_y - 1}, direction = DIR_WEST}, 1, 1)
-            add_ent({name = fast_ins, position = {x = center_x + 1, y = m_y + 1}, direction = DIR_EAST}, 1, 1)
-            add_ent({name = "medium-electric-pole", position = {x = center_x + 2, y = m_y}}, 1, 1)
+            add_ent({name = step.machine_name, position = {x = right_m_x, y = m_y}, recipe = step.recipe_name, direction = DIR_EAST})
+            add_ent({name = fast_ins, position = {x = center_x + 2, y = m_y - 1}, direction = DIR_WEST})
+            add_ent({name = fast_ins, position = {x = center_x + 1, y = m_y + 1}, direction = DIR_EAST})
+            add_ent({name = "medium-electric-pole", position = {x = center_x + 2, y = m_y}})
 
             if state.use_beacons then
-                add_ent({name = "beacon", position = {x = left_pipe_x - 2, y = m_y}}, 3, 3)
-                add_ent({name = "beacon", position = {x = right_pipe_x + 2, y = m_y}}, 3, 3)
+                add_ent({name = "beacon", position = {x = left_m_x - 3, y = m_y}})
+                add_ent({name = "beacon", position = {x = right_m_x + 3, y = m_y}})
             end
         end
         cur_x = cur_x + col_width + 4
@@ -411,7 +350,6 @@ local function build_blueprint(player)
     local end_x = math.max(46, cur_x + 6)
     local top_border_y, bottom_border_y = bus_top_y - 10, max_used_y + 10
 
-    -- Бетонная площадка
     for x = start_x - 8, end_x + 4 do
         for y = top_border_y, bottom_border_y do
             if x == start_x - 8 or x == end_x + 4 or y == top_border_y or y == bottom_border_y then
@@ -422,7 +360,6 @@ local function build_blueprint(player)
         end
     end
 
-    -- КРАСИВЫЕ РОВНЫЕ ЖД РЕЛЬСЫ И СТАНЦИИ ПО ПЕРИМЕТРУ
     if state.add_stations then
         local rail_top = top_border_y + 2 - ((top_border_y + 2) % 2)
         local rail_bot = bottom_border_y - 2 - ((bottom_border_y - 2) % 2)
@@ -430,33 +367,28 @@ local function build_blueprint(player)
         local rail_right = end_x + 2 - ((end_x + 2) % 2)
 
         for rx = rail_left, rail_right, 2 do
-            add_ent({name = "straight-rail", position = {x = rx, y = rail_top}, direction = DIR_EAST, no_quality = true}, 2, 2)
-            add_ent({name = "straight-rail", position = {x = rx, y = rail_bot}, direction = DIR_EAST, no_quality = true}, 2, 2)
-            if rx % 16 == 0 then
-                add_ent({name = "rail-signal", position = {x = rx, y = rail_top + 2}, direction = DIR_EAST, no_quality = true}, 2, 2)
-                add_ent({name = "rail-signal", position = {x = rx, y = rail_bot - 2}, direction = DIR_WEST, no_quality = true}, 2, 2)
-            end
+            add_ent({name = "straight-rail", position = {x = rx, y = rail_top}, direction = DIR_EAST, no_quality = true})
+            add_ent({name = "straight-rail", position = {x = rx, y = rail_bot}, direction = DIR_EAST, no_quality = true})
         end
         for ry = rail_top + 2, rail_bot - 2, 2 do
-            add_ent({name = "straight-rail", position = {x = rail_left, y = ry}, direction = DIR_NORTH, no_quality = true}, 2, 2)
-            add_ent({name = "straight-rail", position = {x = rail_right, y = ry}, direction = DIR_NORTH, no_quality = true}, 2, 2)
+            add_ent({name = "straight-rail", position = {x = rail_left, y = ry}, direction = DIR_NORTH, no_quality = true})
+            add_ent({name = "straight-rail", position = {x = rail_right, y = ry}, direction = DIR_NORTH, no_quality = true})
         end
-
-        add_ent({name = "train-stop", position = {x = rail_left + 14, y = rail_top + 2}, direction = DIR_EAST, station = string.format("[item=%s] Вывоз (%d/м)", state.item, state.rate), trains_limit = 2, no_quality = true}, 2, 2)
+        add_ent({name = "train-stop", position = {x = rail_left + 14, y = rail_top + 2}, direction = DIR_EAST, station = string.format("[item=%s] Вывоз (%d/м)", state.item, state.rate), trains_limit = 2, no_quality = true})
     end
 
     local final_entities = {}
-    local eid = 1
-    for _, ent in pairs(bp_list) do
-        if ent then ent.entity_number = eid; table.insert(final_entities, ent); eid = eid + 1 end
+    for i, ent in ipairs(bp_list) do
+        ent.entity_number = i
+        table.insert(final_entities, ent)
     end
 
     if player.clear_cursor() then
         player.cursor_stack.set_stack({name = "blueprint", count = 1})
         pcall(function() player.cursor_stack.set_blueprint_entities(final_entities) end)
         pcall(function() player.cursor_stack.set_blueprint_tiles(bp_tiles) end)
-        safe_set(player.cursor_stack, "label", string.format("ACB Megabase [%s]: %s (%d/м)", planet_id, state.item, state.rate))
-        player.print("[AutoCityBlock 1.3.2] Идеальный конвейерный завод с ровными ЖД создан!")
+        safe_set(player.cursor_stack, "label", string.format("ACB Megabase [%s]", state.item))
+        player.print("[AutoCityBlock 1.3.3] Завод успешно создан со всеми заводами и конвейерами!")
     end
 end
 
@@ -471,7 +403,7 @@ local function draw_helmod_gui(player)
     run_calculation(player)
     local calc = state.last_calc
 
-    local main_frame = safe_add(screen, {type = "frame", name = "cb_helmod_frame", direction = "vertical", caption = "AutoCityBlock 1.3.2: Мегабаза и Ровные ЖД"})
+    local main_frame = safe_add(screen, {type = "frame", name = "cb_helmod_frame", direction = "vertical", caption = "AutoCityBlock 1.3.3: Мегабаза"})
     if not main_frame then return end
     safe_set(main_frame, "auto_center", true)
     safe_set(main_frame.style, "minimal_width", 850)
@@ -496,7 +428,7 @@ local function draw_helmod_gui(player)
     safe_add(opt_bar, {type = "label", caption = "Модули:"})
     safe_add(opt_bar, {type = "drop-down", name = "cb_drop_modules", items = m_items, selected_index = state.module_index})
     safe_add(opt_bar, {type = "checkbox", name = "cb_chk_beacons", caption = "  ⚡ Маяки", state = state.use_beacons})
-    safe_add(opt_bar, {type = "checkbox", name = "cb_chk_rail", caption = "  🚂 Ровный ЖД контур", state = state.add_stations})
+    safe_add(opt_bar, {type = "checkbox", name = "cb_chk_rail", caption = "  🚂 ЖД периметр", state = state.add_stations})
 
     local scroll = safe_add(main_frame, {type = "scroll-pane", direction = "vertical"})
     if scroll then safe_set(scroll.style, "maximal_height", 320) end
@@ -559,7 +491,7 @@ end)
 script.on_event(defines.events.on_gui_selection_state_changed, function(event)
     pcall(function()
         local el = event.element
-        if not el or not el.valid then return end
+        if not el or not safe_get(el, "valid", false) then return end
         local st = get_state(event.player_index)
         if el.name == "cb_drop_quality" then st.quality_index = el.selected_index
         elseif el.name == "cb_drop_planet" then st.planet_index = el.selected_index

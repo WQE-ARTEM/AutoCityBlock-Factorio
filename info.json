@@ -1,6 +1,6 @@
 {
   "name": "AutoCityBlock",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "title": "Auto City Block: Main Bus & Connected Pipes Edition",
   "author": "WQE-ARTEM",
   "factorio_version": "2.1",
@@ -9,5 +9,5 @@
     "? quality >= 2.0.0",
     "? space-age >= 2.0.0"
   ],
-  "description": "Генератор плотных производственных комплексов с Главной Шиной, красивыми ЖД-путями и гарантированной отрисовкой заводов."
+  "description": "Гарантированный генератор мегабазы с Главной Шиной и плотными рядами."
 }
